@@ -7,12 +7,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Mission {
+
     private String missionId;
     private String date;
     private String location;
     private String outcome;
     private double damageCost;
     private Curse curse;
+
+    // комментарий миссии (поддерживается TXT / JSON / XML)
+    private String comment;
+
+    // строки, которые не удалось распарсить
+    private List<String> unparsedData;
 
     @JacksonXmlElementWrapper(localName = "sorcerers")
     @JacksonXmlProperty(localName = "sorcerer")
@@ -25,19 +32,32 @@ public class Mission {
     public Mission() {
         this.sorcerers = new ArrayList<>();
         this.techniques = new ArrayList<>();
+        this.unparsedData = new ArrayList<>();
     }
 
-    public Mission(String missionId, String date, String location, String outcome,
-                   double damageCost, Curse curse,
-                   List<Sorcerer> sorcerers, List<Technique> techniques) {
+    public Mission(String missionId,
+                   String date,
+                   String location,
+                   String outcome,
+                   double damageCost,
+                   Curse curse,
+                   List<Sorcerer> sorcerers,
+                   List<Technique> techniques,
+                   String comment,
+                   List<String> unparsedData) {
+
         this.missionId = missionId;
         this.date = date;
         this.location = location;
         this.outcome = outcome;
         this.damageCost = damageCost;
         this.curse = curse;
+
         this.sorcerers = sorcerers != null ? sorcerers : new ArrayList<>();
         this.techniques = techniques != null ? techniques : new ArrayList<>();
+
+        this.comment = comment;
+        this.unparsedData = unparsedData != null ? unparsedData : new ArrayList<>();
     }
 
     public String getMissionId() {
@@ -104,17 +124,41 @@ public class Mission {
         this.techniques = techniques != null ? techniques : new ArrayList<>();
     }
 
+    public String getComment() {
+        return comment;
+    }
+
+    public void setComment(String comment) {
+        this.comment = comment;
+    }
+
+    public List<String> getUnparsedData() {
+        return unparsedData;
+    }
+
+    public void setUnparsedData(List<String> unparsedData) {
+        this.unparsedData = unparsedData != null ? unparsedData : new ArrayList<>();
+    }
+
+    public void addUnparsedData(String value) {
+        if (value != null && !value.isBlank()) {
+            this.unparsedData.add(value);
+        }
+    }
+
     @Override
     public String toString() {
         return "Mission{" +
                 "missionId='" + missionId + '\'' +
-                ", date=" + date +
+                ", date='" + date + '\'' +
                 ", location='" + location + '\'' +
                 ", outcome='" + outcome + '\'' +
                 ", damageCost=" + damageCost +
                 ", curse=" + curse +
                 ", sorcerers=" + sorcerers +
                 ", techniques=" + techniques +
+                ", comment='" + comment + '\'' +
+                ", unparsedData=" + unparsedData +
                 '}';
     }
 }
