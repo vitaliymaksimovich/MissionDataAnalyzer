@@ -1,5 +1,7 @@
 package ui;
 
+import ai.AiReviewService;
+import ai.StubAiReviewService;
 import model.Mission;
 import service.MissionReportFormatter;
 import service.MissionService;
@@ -18,10 +20,12 @@ public class MainFrame extends JFrame {
 
     private final MissionService missionService;
     private final MissionReportFormatter reportFormatter;
+    private final AiReviewService aiReviewService;
 
     public MainFrame() {
         this.missionService = new MissionService();
         this.reportFormatter = new MissionReportFormatter();
+        this.aiReviewService = new StubAiReviewService();
 
         setTitle("Mission Analyzer");
         setSize(800, 600);
@@ -53,7 +57,7 @@ public class MainFrame extends JFrame {
         aiReviewArea.setEditable(false);
         aiReviewArea.setLineWrap(true);
         aiReviewArea.setWrapStyleWord(true);
-        aiReviewArea.setText("AI-обзор пока не реализован.");
+        aiReviewArea.setText("AI-обзор пока недоступен.");
 
         JScrollPane reportScrollPane = new JScrollPane(reportArea);
         JScrollPane aiScrollPane = new JScrollPane(aiReviewArea);
@@ -92,10 +96,12 @@ public class MainFrame extends JFrame {
 
         try {
             Mission mission = missionService.loadMission(selectedFile);
+
             String report = reportFormatter.format(mission);
+            String aiReview = aiReviewService.generateReview(mission);
 
             reportArea.setText(report);
-            aiReviewArea.setText("AI-обзор пока не реализован.");
+            aiReviewArea.setText(aiReview);
 
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
