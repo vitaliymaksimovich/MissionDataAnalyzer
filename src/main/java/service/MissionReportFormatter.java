@@ -5,6 +5,8 @@ import model.Mission;
 import model.Sorcerer;
 import model.Technique;
 
+import java.util.List;
+
 public class MissionReportFormatter {
 
     public String format(Mission mission) {
@@ -29,6 +31,12 @@ public class MissionReportFormatter {
 
         sb.append("\n=== ИСПОЛЬЗОВАННЫЕ ТЕХНИКИ ===\n");
         appendTechniques(sb, mission);
+
+        sb.append("\n=== КОММЕНТАРИЙ ===\n");
+        appendComment(sb, mission.getComment());
+
+        sb.append("\n=== НЕОБРАБОТАННЫЕ ДАННЫЕ ===\n");
+        appendUnparsedData(sb, mission.getUnparsedData());
 
         return sb.toString();
     }
@@ -68,6 +76,27 @@ public class MissionReportFormatter {
                     .append(", Владелец: ").append(safe(technique.getOwner()))
                     .append(", Урон: ").append(technique.getDamage())
                     .append("\n");
+        }
+    }
+
+    private void appendComment(StringBuilder sb, String comment) {
+        if (comment == null || comment.isBlank()) {
+            sb.append("Комментарий отсутствует.\n");
+            return;
+        }
+
+        sb.append(comment).append("\n");
+    }
+
+    private void appendUnparsedData(StringBuilder sb, List<String> unparsedData) {
+        if (unparsedData == null || unparsedData.isEmpty()) {
+            sb.append("Все данные успешно обработаны.\n");
+            return;
+        }
+
+        sb.append("Этот текст обработать не вышло:\n");
+        for (String line : unparsedData) {
+            sb.append("- ").append(line).append("\n");
         }
     }
 
