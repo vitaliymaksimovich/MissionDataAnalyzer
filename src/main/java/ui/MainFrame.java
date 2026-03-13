@@ -1,7 +1,7 @@
 package ui;
 
 import ai.AiReviewService;
-import ai.StubAiReviewService;
+import ai.AiServiceFactory;
 import model.Mission;
 import service.MissionReportFormatter;
 import service.MissionService;
@@ -25,7 +25,7 @@ public class MainFrame extends JFrame {
     public MainFrame() {
         this.missionService = new MissionService();
         this.reportFormatter = new MissionReportFormatter();
-        this.aiReviewService = new StubAiReviewService();
+        this.aiReviewService = AiServiceFactory.create();
 
         setTitle("Mission Analyzer");
         setSize(800, 600);
