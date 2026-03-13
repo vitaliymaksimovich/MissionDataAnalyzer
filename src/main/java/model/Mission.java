@@ -1,17 +1,25 @@
 package model;
 
-import java.time.LocalDate;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+
 import java.util.ArrayList;
 import java.util.List;
 
 public class Mission {
     private String missionId;
-    private LocalDate date;
+    private String date;
     private String location;
     private String outcome;
     private double damageCost;
     private Curse curse;
+
+    @JacksonXmlElementWrapper(localName = "sorcerers")
+    @JacksonXmlProperty(localName = "sorcerer")
     private List<Sorcerer> sorcerers;
+
+    @JacksonXmlElementWrapper(localName = "techniques")
+    @JacksonXmlProperty(localName = "technique")
     private List<Technique> techniques;
 
     public Mission() {
@@ -19,7 +27,7 @@ public class Mission {
         this.techniques = new ArrayList<>();
     }
 
-    public Mission(String missionId, LocalDate date, String location, String outcome,
+    public Mission(String missionId, String date, String location, String outcome,
                    double damageCost, Curse curse,
                    List<Sorcerer> sorcerers, List<Technique> techniques) {
         this.missionId = missionId;
@@ -40,11 +48,11 @@ public class Mission {
         this.missionId = missionId;
     }
 
-    public LocalDate getDate() {
+    public String getDate() {
         return date;
     }
 
-    public void setDate(LocalDate date) {
+    public void setDate(String date) {
         this.date = date;
     }
 

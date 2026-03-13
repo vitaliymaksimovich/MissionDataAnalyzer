@@ -91,7 +91,7 @@ public class TxtMissionParser extends MissionParser {
         map.put("missionId", mission::setMissionId);
         map.put("location", mission::setLocation);
         map.put("outcome", mission::setOutcome);
-        map.put("date", v -> mission.setDate(LocalDate.parse(v)));
+        map.put("date", mission::setDate);
         map.put("damageCost", v -> mission.setDamageCost(Double.parseDouble(v)));
 
         return map;
