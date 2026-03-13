@@ -7,7 +7,6 @@ import model.Technique;
 
 import java.io.File;
 import java.io.IOException;
-import java.time.LocalDate;
 import java.util.*;
 import java.util.function.Consumer;
 
@@ -15,141 +14,173 @@ public class TxtMissionParser extends MissionParser {
 
     @Override
     public Mission parse(File file) throws IOException {
-
         String content = readFileContent(file);
         String[] lines = content.split("\\R");
 
         Mission mission = new Mission();
         Curse curse = new Curse();
-        List<Sorcerer> sorcerers = new ArrayList<>();
-        List<Technique> techniques = new ArrayList<>();
+
+        Map<Integer, Sorcerer> sorcererMap = new HashMap<>();
+        Map<Integer, Technique> techniqueMap = new HashMap<>();
 
         Map<String, Consumer<String>> missionHandlers = createMissionHandlers(mission);
-        Map<String, Consumer<String>> curseHandlers = createCurseHandlers(curse);
-
-        String section = "mission";
 
         for (String rawLine : lines) {
-
             String line = rawLine.trim();
 
-            if (line.isEmpty()) continue;
-
-            if (line.equalsIgnoreCase("curse:")) {
-                section = "curse";
+            if (line.isEmpty() || !line.contains(":")) {
                 continue;
             }
-
-            if (line.equalsIgnoreCase("sorcerers:")) {
-                section = "sorcerers";
-                continue;
-            }
-
-            if (line.equalsIgnoreCase("techniques:")) {
-                section = "techniques";
-                continue;
-            }
-
-            if (section.equals("sorcerers") && line.startsWith("-")) {
-                sorcerers.add(parseSorcerer(line));
-                continue;
-            }
-
-            if (section.equals("techniques") && line.startsWith("-")) {
-                techniques.add(parseTechnique(line));
-                continue;
-            }
-
-            if (!line.contains(":")) continue;
 
             String[] parts = line.split(":", 2);
             String key = parts[0].trim();
             String value = parts[1].trim();
 
-            if (section.equals("mission")) {
-                Consumer<String> handler = missionHandlers.get(key);
-                if (handler != null) handler.accept(value);
+            if (missionHandlers.containsKey(key)) {
+                missionHandlers.get(key).accept(value);
+                continue;
             }
 
-            if (section.equals("curse")) {
-                Consumer<String> handler = curseHandlers.get(key);
-                if (handler != null) handler.accept(value);
+            if (key.startsWith("curse.")) {
+                if (!parseCurseField(curse, key, value)) {
+                    mission.addUnparsedData(line);
+                }
+                continue;
             }
+
+            if (key.startsWith("sorcerer[")) {
+                if (!parseSorcererField(sorcererMap, key, value)) {
+                    mission.addUnparsedData(line);
+                }
+                continue;
+            }
+
+            if (key.startsWith("technique[")) {
+                if (!parseTechniqueField(techniqueMap, key, value)) {
+                    mission.addUnparsedData(line);
+                }
+                continue;
+            }
+
+            mission.addUnparsedData(line);
         }
 
         mission.setCurse(curse);
-        mission.setSorcerers(sorcerers);
-        mission.setTechniques(techniques);
+        mission.setSorcerers(toSortedList(sorcererMap));
+        mission.setTechniques(toSortedList(techniqueMap));
 
         return mission;
     }
 
     private Map<String, Consumer<String>> createMissionHandlers(Mission mission) {
-
         Map<String, Consumer<String>> map = new HashMap<>();
 
         map.put("missionId", mission::setMissionId);
+        map.put("date", mission::setDate);
         map.put("location", mission::setLocation);
         map.put("outcome", mission::setOutcome);
-        map.put("date", mission::setDate);
-        map.put("damageCost", v -> mission.setDamageCost(Double.parseDouble(v)));
+        map.put("note", mission::setComment);
+        map.put("damageCost", value -> mission.setDamageCost(Double.parseDouble(value)));
 
         return map;
     }
 
-    private Map<String, Consumer<String>> createCurseHandlers(Curse curse) {
-
-        Map<String, Consumer<String>> map = new HashMap<>();
-
-        map.put("name", curse::setName);
-        map.put("threatLevel", curse::setThreatLevel);
-
-        return map;
+    private boolean parseCurseField(Curse curse, String key, String value) {
+        switch (key) {
+            case "curse.name" -> {
+                curse.setName(value);
+                return true;
+            }
+            case "curse.threatLevel" -> {
+                curse.setThreatLevel(value);
+                return true;
+            }
+            default -> {
+                return false;
+            }
+        }
     }
 
-    private Sorcerer parseSorcerer(String line) {
+    private boolean parseSorcererField(Map<Integer, Sorcerer> sorcererMap, String key, String value) {
+        int index = extractIndex(key);
+        String fieldName = extractFieldName(key);
 
-        String data = line.substring(1).trim();
-        String[] parts = data.split(",");
+        Sorcerer sorcerer = sorcererMap.computeIfAbsent(index, i -> new Sorcerer());
 
-        String name = "";
-        String rank = "";
-
-        for (String part : parts) {
-
-            String[] pair = part.split(":", 2);
-            String key = pair[0].trim();
-            String value = pair[1].trim();
-
-            if (key.equals("name")) name = value;
-            if (key.equals("rank")) rank = value;
+        switch (fieldName) {
+            case "name" -> {
+                sorcerer.setName(value);
+                return true;
+            }
+            case "rank" -> {
+                sorcerer.setRank(value);
+                return true;
+            }
+            default -> {
+                return false;
+            }
         }
-
-        return new Sorcerer(name, rank);
     }
 
-    private Technique parseTechnique(String line) {
+    private boolean parseTechniqueField(Map<Integer, Technique> techniqueMap, String key, String value) {
+        int index = extractIndex(key);
+        String fieldName = extractFieldName(key);
 
-        String data = line.substring(1).trim();
-        String[] parts = data.split(",");
+        Technique technique = techniqueMap.computeIfAbsent(index, i -> new Technique());
 
-        String name = "";
-        String type = "";
-        String owner = "";
-        double damage = 0;
+        switch (fieldName) {
+            case "name" -> {
+                technique.setName(value);
+                return true;
+            }
+            case "type" -> {
+                technique.setType(value);
+                return true;
+            }
+            case "owner" -> {
+                technique.setOwner(value);
+                return true;
+            }
+            case "damage" -> {
+                technique.setDamage(Double.parseDouble(value));
+                return true;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
 
-        for (String part : parts) {
+    private int extractIndex(String key) {
+        int start = key.indexOf('[');
+        int end = key.indexOf(']');
 
-            String[] pair = part.split(":", 2);
-            String key = pair[0].trim();
-            String value = pair[1].trim();
-
-            if (key.equals("name")) name = value;
-            if (key.equals("type")) type = value;
-            if (key.equals("owner")) owner = value;
-            if (key.equals("damage")) damage = Double.parseDouble(value);
+        if (start == -1 || end == -1 || end <= start + 1) {
+            throw new IllegalArgumentException("Invalid indexed key: " + key);
         }
 
-        return new Technique(name, type, owner, damage);
+        return Integer.parseInt(key.substring(start + 1, end));
+    }
+
+    private String extractFieldName(String key) {
+        int dotIndex = key.lastIndexOf('.');
+
+        if (dotIndex == -1 || dotIndex == key.length() - 1) {
+            throw new IllegalArgumentException("Invalid field key: " + key);
+        }
+
+        return key.substring(dotIndex + 1);
+    }
+
+    private <T> List<T> toSortedList(Map<Integer, T> map) {
+        List<Integer> indexes = new ArrayList<>(map.keySet());
+        Collections.sort(indexes);
+
+        List<T> result = new ArrayList<>();
+        for (Integer index : indexes) {
+            result.add(map.get(index));
+        }
+
+        return result;
     }
 }
