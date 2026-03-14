@@ -9,6 +9,10 @@ import service.MissionService;
 import javax.swing.*;
 import java.awt.*;
 import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class MainFrame extends JFrame {
 
@@ -28,7 +32,7 @@ public class MainFrame extends JFrame {
         this.aiReviewService = AiServiceFactory.create();
 
         setTitle("Mission Analyzer");
-        setSize(800, 600);
+        setSize(900, 650);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
@@ -40,9 +44,11 @@ public class MainFrame extends JFrame {
 
         JButton chooseFileButton = new JButton("Выбрать файл");
         JButton analyzeButton = new JButton("Анализ миссии");
+        JButton saveButton = new JButton("Сохранить отчёт в TXT");
 
         buttonPanel.add(chooseFileButton);
         buttonPanel.add(analyzeButton);
+        buttonPanel.add(saveButton);
 
         topPanel.add(new JLabel("Путь к файлу:"), BorderLayout.NORTH);
         topPanel.add(filePathField, BorderLayout.CENTER);
@@ -59,11 +65,17 @@ public class MainFrame extends JFrame {
         aiReviewArea.setWrapStyleWord(true);
         aiReviewArea.setText("AI-обзор пока недоступен.");
 
-        JScrollPane reportScrollPane = new JScrollPane(reportArea);
-        JScrollPane aiScrollPane = new JScrollPane(aiReviewArea);
+        JPanel reportPanel = new JPanel(new BorderLayout());
+        reportPanel.add(new JLabel("Полученные данные"), BorderLayout.NORTH);
+        reportPanel.add(new JScrollPane(reportArea), BorderLayout.CENTER);
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, reportScrollPane, aiScrollPane);
-        splitPane.setResizeWeight(0.75);
+        JPanel aiPanel = new JPanel(new BorderLayout());
+        aiPanel.add(new JLabel("Заключение от GigaChat"), BorderLayout.NORTH);
+        aiPanel.add(new JScrollPane(aiReviewArea), BorderLayout.CENTER);
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, reportPanel, aiPanel);
+        splitPane.setResizeWeight(0.7);
+        splitPane.setDividerLocation(400);
 
         setLayout(new BorderLayout(10, 10));
         add(topPanel, BorderLayout.NORTH);
@@ -71,6 +83,7 @@ public class MainFrame extends JFrame {
 
         chooseFileButton.addActionListener(e -> chooseFile());
         analyzeButton.addActionListener(e -> analyzeMission());
+        saveButton.addActionListener(e -> saveReportToTxt());
     }
 
     private void chooseFile() {
@@ -110,6 +123,72 @@ public class MainFrame extends JFrame {
                     "Ошибка",
                     JOptionPane.ERROR_MESSAGE
             );
+        }
+    }
+
+    private void saveReportToTxt() {
+        if (reportArea.getText().isBlank()) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Сначала выполните анализ миссии.",
+                    "Предупреждение",
+                    JOptionPane.WARNING_MESSAGE
+            );
+            return;
+        }
+
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Сохранить отчёт");
+
+        int result = fileChooser.showSaveDialog(this);
+
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File file = fileChooser.getSelectedFile();
+
+            if (!file.getName().toLowerCase().endsWith(".txt")) {
+                file = new File(file.getAbsolutePath() + ".txt");
+            }
+
+            String analysisDateTime = LocalDateTime.now()
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"));
+
+            String sourceFileName = selectedFile != null ? selectedFile.getName() : "Неизвестно";
+
+            String separator = "------------------------------------------------------------";
+
+            String content =
+                    "MISSION ANALYZER REPORT\n" +
+                            separator + "\n" +
+                            "Дата и время анализа: " + analysisDateTime + "\n" +
+                            "Исходный файл миссии: " + sourceFileName + "\n" +
+                            separator + "\n\n" +
+                            "=== ПОЛУЧЕННЫЕ ДАННЫЕ ===\n" +
+                            reportArea.getText() +
+                            "\n\n" +
+                            separator + "\n" +
+                            "=== ЗАКЛЮЧЕНИЕ ОТ GIGACHAT ===\n" +
+                            aiReviewArea.getText() +
+                            "\n" +
+                            separator + "\n";
+
+            try (FileWriter writer = new FileWriter(file)) {
+                writer.write(content);
+
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Отчёт успешно сохранён:\n" + file.getAbsolutePath(),
+                        "Успех",
+                        JOptionPane.INFORMATION_MESSAGE
+                );
+
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Не удалось сохранить файл:\n" + e.getMessage(),
+                        "Ошибка",
+                        JOptionPane.ERROR_MESSAGE
+                );
+            }
         }
     }
 }
