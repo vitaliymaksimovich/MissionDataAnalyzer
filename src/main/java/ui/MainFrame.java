@@ -65,6 +65,7 @@ public class MainFrame extends JFrame {
         reportArea.setWrapStyleWord(true);
 
         aiReviewArea = new JTextArea();
+        aiReviewArea.setBackground(new Color(235, 248, 235));
         aiReviewArea.setEditable(false);
         aiReviewArea.setLineWrap(true);
         aiReviewArea.setWrapStyleWord(true);
@@ -79,7 +80,7 @@ public class MainFrame extends JFrame {
         aiPanel.add(new JScrollPane(aiReviewArea), BorderLayout.CENTER);
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, reportPanel, aiPanel);
-        splitPane.setResizeWeight(0.6);
+        splitPane.setResizeWeight(0.7);
         splitPane.setContinuousLayout(true);
         splitPane.setOneTouchExpandable(true);
 
