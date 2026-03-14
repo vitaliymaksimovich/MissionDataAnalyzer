@@ -1,5 +1,10 @@
 # MissionDataAnalyzer
 
+[![Java](https://img.shields.io/badge/Java-17+-orange)]()
+[![Maven](https://img.shields.io/badge/Maven-build-blue)]()
+[![Release](https://img.shields.io/github/v/release/vitaliymaksimovich/MissionDataAnalyzer)](https://github.com/vitaliymaksimovich/MissionDataAnalyzer/releases)
+[![AI](https://img.shields.io/badge/AI-GigaChat-blue)]()
+
 Приложение для анализа миссий с поддержкой AI-обзора через GigaChat.  
 Позволяет загружать миссии в формате **TXT**, **JSON** или **XML**, отображать структурированные данные, получать краткий AI-отчёт и экспортировать результаты в **HTML** и **TXT**.
 
