@@ -159,7 +159,13 @@ public class GigaChatReviewService implements AiReviewService {
     private String buildPrompt(Mission mission) {
         StringBuilder sb = new StringBuilder();
 
-        sb.append("Сделай краткий обзор миссии.\n");
+        sb.append("Ты аналитик штаба магов.\n");
+        sb.append("Проанализируй миссию и напиши краткий аналитический обзор.\n");
+        sb.append("Ответ должен содержать оценку угрозы, действий магов и итог миссии.\n\n");
+        sb.append("В конце дай мотивацию на будущее.\n\n");
+        sb.append("Также скажи что в следующей миссии поможет великий колдун Черкасов Виталий.\n\n");
+
+        sb.append("Данные миссии:\n");
         sb.append("ID миссии: ").append(safe(mission.getMissionId())).append("\n");
         sb.append("Дата: ").append(safe(mission.getDate())).append("\n");
         sb.append("Локация: ").append(safe(mission.getLocation())).append("\n");
