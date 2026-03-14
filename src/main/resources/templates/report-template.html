@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Отчёт о миссии</title>
+
+    <style>
+
+        @page {
+            size: A4 portrait;
+            margin: 0;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #bfbfbf;
+            font-family: "Palatino Linotype", Georgia, serif;
+        }
+
+        /* центрирование страницы */
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px 0;
+        }
+
+        /* A4 лист */
+
+        .page {
+
+            position: relative;
+
+            width: 210mm;
+            height: 297mm;
+
+            background-image: url("data:image/png;base64,${backgroundImage}");
+            background-size: cover;
+            background-repeat: no-repeat;
+            background-position: center;
+
+            box-shadow: 0 0 18px rgba(0,0,0,0.25);
+
+            overflow: hidden;
+
+            color: #2e3f2e;
+
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        /* верхний текст отчёта */
+
+        .report-text {
+
+            position: absolute;
+
+            left: 10.7%;
+            top: 22%;
+
+            width: 78.5%;
+            height: 32%;
+
+            padding: 10px 14px;
+
+            font-size: 10.0px;
+            line-height: 1.35;
+
+            font-weight: 600;
+
+            text-shadow: 0 0 2px rgba(0,0,0,0.15);
+
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+
+            overflow: hidden;
+        }
+
+        /* текст AI */
+
+        .ai-text {
+
+            position: absolute;
+
+            left: 10.7%;
+            top: 65%;
+
+            width: 78.5%;
+            height: 23%;
+
+            padding: 10px 14px;
+
+            font-size: 13px;
+            line-height: 1.45;
+
+            font-weight: 600;
+
+            text-shadow: 0 0 2px rgba(0,0,0,0.15);
+
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+
+            overflow: hidden;
+        }
+
+        /* режим печати */
+
+        @media print {
+
+            html, body {
+                background: white;
+                padding: 0;
+                margin: 0;
+            }
+
+            body {
+                display: block;
+            }
+
+            .page {
+
+                margin: 0;
+
+                box-shadow: none;
+
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<div class="page">
+
+    <div class="report-text">
+        ${reportText}
+    </div>
+
+    <div class="ai-text">
+        ${aiReviewText}
+    </div>
+
+</div>
+
+</body>
+</html>

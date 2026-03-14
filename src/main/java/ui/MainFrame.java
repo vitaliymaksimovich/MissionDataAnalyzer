@@ -3,6 +3,7 @@ package ui;
 import ai.AiReviewService;
 import ai.AiServiceFactory;
 import model.Mission;
+import service.HtmlReportExporter;
 import service.MissionReportFormatter;
 import service.MissionService;
 
@@ -25,11 +26,13 @@ public class MainFrame extends JFrame {
     private final MissionService missionService;
     private final MissionReportFormatter reportFormatter;
     private final AiReviewService aiReviewService;
+    private final HtmlReportExporter htmlReportExporter;
 
     public MainFrame() {
         this.missionService = new MissionService();
         this.reportFormatter = new MissionReportFormatter();
         this.aiReviewService = AiServiceFactory.create();
+        this.htmlReportExporter = new HtmlReportExporter();
 
         setTitle("Mission Analyzer");
         setSize(900, 650);
@@ -44,11 +47,13 @@ public class MainFrame extends JFrame {
 
         JButton chooseFileButton = new JButton("Выбрать файл");
         JButton analyzeButton = new JButton("Анализ миссии");
-        JButton saveButton = new JButton("Сохранить отчёт в TXT");
+        JButton saveTxtButton = new JButton("Сохранить отчёт в TXT");
+        JButton saveHtmlButton = new JButton("Сохранить отчёт в HTML");
 
         buttonPanel.add(chooseFileButton);
         buttonPanel.add(analyzeButton);
-        buttonPanel.add(saveButton);
+        buttonPanel.add(saveTxtButton);
+        buttonPanel.add(saveHtmlButton);
 
         topPanel.add(new JLabel("Путь к файлу:"), BorderLayout.NORTH);
         topPanel.add(filePathField, BorderLayout.CENTER);
@@ -74,8 +79,9 @@ public class MainFrame extends JFrame {
         aiPanel.add(new JScrollPane(aiReviewArea), BorderLayout.CENTER);
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, reportPanel, aiPanel);
-        splitPane.setResizeWeight(0.7);
-        splitPane.setDividerLocation(400);
+        splitPane.setResizeWeight(0.6);
+        splitPane.setContinuousLayout(true);
+        splitPane.setOneTouchExpandable(true);
 
         setLayout(new BorderLayout(10, 10));
         add(topPanel, BorderLayout.NORTH);
@@ -83,7 +89,8 @@ public class MainFrame extends JFrame {
 
         chooseFileButton.addActionListener(e -> chooseFile());
         analyzeButton.addActionListener(e -> analyzeMission());
-        saveButton.addActionListener(e -> saveReportToTxt());
+        saveTxtButton.addActionListener(e -> saveReportToTxt());
+        saveHtmlButton.addActionListener(e -> saveReportToHtml());
     }
 
     private void chooseFile() {
@@ -185,6 +192,50 @@ public class MainFrame extends JFrame {
                 JOptionPane.showMessageDialog(
                         this,
                         "Не удалось сохранить файл:\n" + e.getMessage(),
+                        "Ошибка",
+                        JOptionPane.ERROR_MESSAGE
+                );
+            }
+        }
+    }
+
+    private void saveReportToHtml() {
+        if (reportArea.getText().isBlank()) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Сначала выполните анализ миссии.",
+                    "Предупреждение",
+                    JOptionPane.WARNING_MESSAGE
+            );
+            return;
+        }
+
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Сохранить HTML-отчёт");
+
+        int result = fileChooser.showSaveDialog(this);
+
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File file = fileChooser.getSelectedFile();
+
+            if (!file.getName().toLowerCase().endsWith(".html")) {
+                file = new File(file.getAbsolutePath() + ".html");
+            }
+
+            try {
+                htmlReportExporter.export(file, reportArea.getText(), aiReviewArea.getText());
+
+                JOptionPane.showMessageDialog(
+                        this,
+                        "HTML-отчёт успешно сохранён:\n" + file.getAbsolutePath(),
+                        "Успех",
+                        JOptionPane.INFORMATION_MESSAGE
+                );
+
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Не удалось сохранить HTML-файл:\n" + e.getMessage(),
                         "Ошибка",
                         JOptionPane.ERROR_MESSAGE
                 );
