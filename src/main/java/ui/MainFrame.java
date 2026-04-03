@@ -6,27 +6,30 @@ import model.Mission;
 import service.*;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 public class MainFrame extends JFrame {
 
-    private final JTextField filePathField;
-    private final JTextArea reportArea;
-    private final JTextArea aiReviewArea;
-    private final JComboBox<ReportFormatter> reportTypeSelector;
-
-    private File selectedFile;
+    // --- данные ---
+    private final List<Mission> loadedMissions = new ArrayList<>();
+    private final List<File> loadedFiles = new ArrayList<>();
     private Mission currentMission;
+    private JButton activeButton = null; // текущая выделенная кнопка
 
-    private final MissionService missionService;
-    private final AiReviewService aiReviewService;
-    private final HtmlReportExporter htmlReportExporter;
+    // --- сервисы ---
+    private final MissionBatchService batchService = new MissionBatchService();
+    private final BatchStatsFormatter statsFormatter = new BatchStatsFormatter();
+    private final MissionService missionService = new MissionService();
+    private final AiReviewService aiReviewService = AiServiceFactory.create();
+    private final HtmlReportExporter htmlReportExporter = new HtmlReportExporter();
 
     private final List<ReportFormatter> formatters = List.of(
             new FullReportFormatter(),
@@ -34,183 +37,262 @@ public class MainFrame extends JFrame {
             new RiskReportFormatter()
     );
 
+    // --- UI ---
+    private final JTextArea reportArea = new JTextArea();
+    private final JTextArea aiReviewArea = new JTextArea();
+    private final JComboBox<ReportFormatter> reportTypeSelector;
+    private final JPanel missionListPanel = new JPanel();
+
     public MainFrame() {
-        this.missionService    = new MissionService();
-        this.aiReviewService   = AiServiceFactory.create();
-        this.htmlReportExporter = new HtmlReportExporter();
-
-        setTitle("Mission Analyzer");
-        setSize(900, 650);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLocationRelativeTo(null);
-
-        // --- верхняя панель ---
-        filePathField = new JTextField();
-        filePathField.setEditable(false);
-
-        JButton chooseFileButton = new JButton("Выбрать файл");
-        JButton analyzeButton    = new JButton("Анализ миссии");
-        JButton saveTxtButton    = new JButton("Сохранить TXT");
-        JButton saveHtmlButton   = new JButton("Сохранить HTML");
-
         reportTypeSelector = new JComboBox<>(formatters.toArray(new ReportFormatter[0]));
         reportTypeSelector.setRenderer((list, value, index, isSelected, cellHasFocus) -> {
             JLabel label = new JLabel(value != null ? value.getDisplayName() : "");
-            if (isSelected) {
-                label.setBackground(list.getSelectionBackground());
-                label.setForeground(list.getSelectionForeground());
-                label.setOpaque(true);
-            }
+            if (isSelected) { label.setOpaque(true); label.setBackground(list.getSelectionBackground()); }
             return label;
         });
-        // при смене типа отчёта — сразу перерисовываем если миссия уже загружена
         reportTypeSelector.addActionListener(e -> refreshReport());
+        setupWindow();
+    }
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        buttonPanel.add(chooseFileButton);
-        buttonPanel.add(analyzeButton);
-        buttonPanel.add(new JLabel("Тип отчёта:"));
-        buttonPanel.add(reportTypeSelector);
-        buttonPanel.add(saveTxtButton);
-        buttonPanel.add(saveHtmlButton);
+    private void setupWindow() {
+        setTitle("Mission Analyzer");
+        setSize(1000, 700);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setLayout(new BorderLayout(5, 5));
+        add(buildTopPanel(), BorderLayout.NORTH);
+        add(buildCenterPanel(), BorderLayout.CENTER);
+        add(buildAiPanel(), BorderLayout.SOUTH);
+    }
 
-        JPanel topPanel = new JPanel(new BorderLayout(5, 5));
-        topPanel.add(new JLabel("Путь к файлу:"), BorderLayout.NORTH);
-        topPanel.add(filePathField, BorderLayout.CENTER);
-        topPanel.add(buttonPanel, BorderLayout.SOUTH);
+    private JPanel buildTopPanel() {
+        JButton chooseBtn   = new JButton("Выбрать файлы");
+        JButton saveTxtBtn  = new JButton("Сохранить TXT");
+        JButton saveHtmlBtn = new JButton("Сохранить HTML");
+        JButton logsBtn     = new JButton("Логи");
 
-        // --- области текста ---
-        reportArea = new JTextArea();
+        chooseBtn.addActionListener(e -> chooseFiles());
+        saveTxtBtn.addActionListener(e -> saveReportToTxt());
+        saveHtmlBtn.addActionListener(e -> saveReportToHtml());
+        logsBtn.addActionListener(e -> showLogs());
+
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 5));
+        panel.add(chooseBtn);
+        panel.add(new JLabel("Тип отчёта:"));
+        panel.add(reportTypeSelector);
+        panel.add(saveTxtBtn);
+        panel.add(saveHtmlBtn);
+        panel.add(logsBtn);
+        return panel;
+    }
+
+    private JSplitPane buildCenterPanel() {
+        missionListPanel.setLayout(new BoxLayout(missionListPanel, BoxLayout.Y_AXIS));
+        missionListPanel.setBorder(new EmptyBorder(5, 5, 5, 5));
+
+        JScrollPane listScroll = new JScrollPane(missionListPanel);
+        listScroll.setPreferredSize(new Dimension(200, 0));
+        listScroll.setBorder(BorderFactory.createTitledBorder("Миссии"));
+
         reportArea.setEditable(false);
         reportArea.setLineWrap(true);
         reportArea.setWrapStyleWord(true);
+        reportArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
 
-        aiReviewArea = new JTextArea();
-        aiReviewArea.setBackground(new Color(235, 248, 235));
+        JScrollPane reportScroll = new JScrollPane(reportArea);
+        reportScroll.setBorder(BorderFactory.createTitledBorder("Отчёт"));
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listScroll, reportScroll);
+        split.setDividerLocation(200);
+        split.setResizeWeight(0.0);
+        return split;
+    }
+
+    private JPanel buildAiPanel() {
         aiReviewArea.setEditable(false);
         aiReviewArea.setLineWrap(true);
         aiReviewArea.setWrapStyleWord(true);
+        aiReviewArea.setBackground(new Color(235, 248, 235));
+        aiReviewArea.setRows(4);
         aiReviewArea.setText("AI-обзор пока недоступен.");
 
-        JPanel reportPanel = new JPanel(new BorderLayout());
-        reportPanel.add(new JLabel("Полученные данные"), BorderLayout.NORTH);
-        reportPanel.add(new JScrollPane(reportArea), BorderLayout.CENTER);
-
-        JPanel aiPanel = new JPanel(new BorderLayout());
-        aiPanel.add(new JLabel("Заключение от GigaChat"), BorderLayout.NORTH);
-        aiPanel.add(new JScrollPane(aiReviewArea), BorderLayout.CENTER);
-
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, reportPanel, aiPanel);
-        splitPane.setResizeWeight(0.7);
-        splitPane.setContinuousLayout(true);
-        splitPane.setOneTouchExpandable(true);
-
-        setLayout(new BorderLayout(10, 10));
-        add(topPanel, BorderLayout.NORTH);
-        add(splitPane, BorderLayout.CENTER);
-
-        // --- обработчики ---
-        chooseFileButton.addActionListener(e -> chooseFile());
-        analyzeButton.addActionListener(e -> analyzeMission());
-        saveTxtButton.addActionListener(e -> saveReportToTxt());
-        saveHtmlButton.addActionListener(e -> saveReportToHtml());
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.add(new JLabel("Заключение от GigaChat"), BorderLayout.NORTH);
+        panel.add(new JScrollPane(aiReviewArea), BorderLayout.CENTER);
+        panel.setPreferredSize(new Dimension(0, 130));
+        return panel;
     }
 
-    private void chooseFile() {
+    // --- загрузка файлов с валидацией на месте ---
+    private void chooseFiles() {
         JFileChooser fc = new JFileChooser();
-        if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            selectedFile = fc.getSelectedFile();
-            filePathField.setText(selectedFile.getAbsolutePath());
-            currentMission = null;
-            reportArea.setText("");
-            aiReviewArea.setText("AI-обзор пока недоступен.");
-        }
-    }
+        fc.setMultiSelectionEnabled(true);
+        if (fc.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
-    private void analyzeMission() {
-        if (selectedFile == null) {
-            warn("Сначала выберите файл миссии.");
-            return;
+        loadedFiles.clear();
+        loadedMissions.clear();
+        currentMission = null;
+        activeButton = null;
+        reportArea.setText("");
+        aiReviewArea.setText("AI-обзор пока недоступен.");
+
+        List<String> failed = new ArrayList<>();
+        for (File file : fc.getSelectedFiles()) {
+            // проверяем файл ещё на стадии загрузки — пробуем распарсить
+            try {
+                Mission mission = missionService.loadMission(file);
+                loadedFiles.add(file);
+                loadedMissions.add(mission);
+            } catch (Exception e) {
+                failed.add(file.getName() + ": " + e.getMessage());
+            }
         }
-        try {
-            currentMission = missionService.loadMission(selectedFile);
+
+        if (!failed.isEmpty()) {
+            warn("Следующие файлы не удалось загрузить:\n" + String.join("\n", failed));
+        }
+
+        rebuildMissionList();
+
+        // сразу показываем первую миссию если есть
+        if (!loadedMissions.isEmpty()) {
+            currentMission = loadedMissions.get(0);
             refreshReport();
-            aiReviewArea.setText(aiReviewService.generateReview(currentMission));
-        } catch (Exception e) {
-            error("Ошибка при анализе файла:\n" + e.getMessage());
+            // первую кнопку выделяем
+            if (missionListPanel.getComponentCount() > 0) {
+                Component first = missionListPanel.getComponent(0);
+                if (first instanceof JButton btn) setActiveButton(btn);
+            }
         }
     }
 
-    // вызывается и при анализе, и при смене типа отчёта
+    private void rebuildMissionList() {
+        missionListPanel.removeAll();
+
+        for (int i = 0; i < loadedMissions.size(); i++) {
+            Mission mission = loadedMissions.get(i);
+            String label = mission.getMissionId() != null
+                    ? mission.getMissionId()
+                    : loadedFiles.get(i).getName();
+
+            JButton btn = new JButton(label);
+            btn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
+            btn.setHorizontalAlignment(SwingConstants.LEFT);
+
+            final int idx = i;
+            btn.addActionListener(e -> {
+                setActiveButton(btn);
+                selectMission(idx);
+            });
+            missionListPanel.add(btn);
+            missionListPanel.add(Box.createVerticalStrut(3));
+        }
+
+        // кнопка "Общая статистика" внизу списка — только если есть хоть одна миссия
+        if (!loadedMissions.isEmpty()) {
+            missionListPanel.add(Box.createVerticalStrut(10));
+            JSeparator sep = new JSeparator();
+            sep.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
+            missionListPanel.add(sep);
+            missionListPanel.add(Box.createVerticalStrut(5));
+
+            JButton statsBtn = new JButton("Общая статистика");
+            statsBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
+            statsBtn.setBackground(new Color(220, 235, 255));
+            statsBtn.addActionListener(e -> {
+                setActiveButton(statsBtn);
+                showStats();
+            });
+            missionListPanel.add(statsBtn);
+        }
+
+        missionListPanel.revalidate();
+        missionListPanel.repaint();
+    }
+
+    // выделяем нажатую кнопку, снимаем с предыдущей
+    private void setActiveButton(JButton btn) {
+        if (activeButton != null) {
+            activeButton.setBackground(null);
+            activeButton.setOpaque(false);
+        }
+        activeButton = btn;
+        activeButton.setBackground(new Color(180, 210, 255));
+        activeButton.setOpaque(true);
+    }
+
+    private void selectMission(int idx) {
+        currentMission = loadedMissions.get(idx);
+        refreshReport();
+        aiReviewArea.setText(aiReviewService.generateReview(currentMission));
+    }
+
+    private void showStats() {
+        currentMission = null;
+        reportArea.setText(statsFormatter.format(loadedMissions));
+        reportArea.setCaretPosition(0);
+        aiReviewArea.setText("AI-обзор недоступен для общей статистики.");
+    }
+
     private void refreshReport() {
         if (currentMission == null) return;
         ReportFormatter formatter = (ReportFormatter) reportTypeSelector.getSelectedItem();
-        if (formatter != null) {
-            reportArea.setText(formatter.format(currentMission));
-            reportArea.setCaretPosition(0);
-        }
+        if (formatter == null) return;
+        reportArea.setText(formatter.format(currentMission));
+        reportArea.setCaretPosition(0);
+    }
+
+    private void showLogs() {
+        JTextArea logArea = new JTextArea(25, 70);
+        logArea.setEditable(false);
+        logArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        logArea.setText(AppLogger.getLogs());
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+        JOptionPane.showMessageDialog(this, new JScrollPane(logArea), "Логи", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void saveReportToTxt() {
-        if (!hasReport()) return;
+        if (reportArea.getText().isBlank()) { warn("Сначала выполните анализ."); return; }
         JFileChooser fc = new JFileChooser();
-        fc.setDialogTitle("Сохранить отчёт");
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-
         File file = ensureExtension(fc.getSelectedFile(), ".txt");
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"));
-        String separator = "-".repeat(60);
 
-        String content = "MISSION ANALYZER REPORT\n" + separator + "\n"
+        String sep = "-".repeat(60);
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"));
+        ReportFormatter fmt = (ReportFormatter) reportTypeSelector.getSelectedItem();
+
+        String content = "MISSION ANALYZER REPORT\n" + sep + "\n"
                 + "Дата анализа: " + timestamp + "\n"
-                + "Файл миссии: " + (selectedFile != null ? selectedFile.getName() : "—") + "\n"
-                + "Тип отчёта: " + ((ReportFormatter) reportTypeSelector.getSelectedItem()).getDisplayName() + "\n"
-                + separator + "\n\n"
+                + "Тип отчёта: " + (fmt != null ? fmt.getDisplayName() : "—") + "\n"
+                + sep + "\n\n"
                 + reportArea.getText() + "\n\n"
-                + separator + "\n"
-                + "=== ЗАКЛЮЧЕНИЕ ОТ GIGACHAT ===\n"
-                + aiReviewArea.getText() + "\n"
-                + separator + "\n";
+                + sep + "\n=== ЗАКЛЮЧЕНИЕ ОТ GIGACHAT ===\n"
+                + aiReviewArea.getText() + "\n" + sep + "\n";
 
         try (FileWriter fw = new FileWriter(file)) {
             fw.write(content);
             info("Отчёт сохранён:\n" + file.getAbsolutePath());
         } catch (IOException e) {
-            error("Не удалось сохранить файл:\n" + e.getMessage());
+            error("Не удалось сохранить:\n" + e.getMessage());
         }
     }
 
     private void saveReportToHtml() {
-        if (!hasReport()) return;
+        if (reportArea.getText().isBlank()) { warn("Сначала выполните анализ."); return; }
         JFileChooser fc = new JFileChooser();
-        fc.setDialogTitle("Сохранить HTML-отчёт");
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-
         File file = ensureExtension(fc.getSelectedFile(), ".html");
         try {
             htmlReportExporter.export(file, reportArea.getText(), aiReviewArea.getText());
-            info("HTML-отчёт сохранён:\n" + file.getAbsolutePath());
+            info("HTML сохранён:\n" + file.getAbsolutePath());
         } catch (IOException e) {
-            error("Не удалось сохранить HTML-файл:\n" + e.getMessage());
+            error("Не удалось сохранить:\n" + e.getMessage());
         }
-    }
-
-    // --- утилиты ---
-
-    private boolean hasReport() {
-        if (reportArea.getText().isBlank()) {
-            warn("Сначала выполните анализ миссии.");
-            return false;
-        }
-        return true;
     }
 
     private File ensureExtension(File file, String ext) {
-        return file.getName().toLowerCase().endsWith(ext)
-                ? file
-                : new File(file.getAbsolutePath() + ext);
+        return file.getName().toLowerCase().endsWith(ext) ? file : new File(file.getAbsolutePath() + ext);
     }
-
     private void warn(String msg)  { JOptionPane.showMessageDialog(this, msg, "Предупреждение", JOptionPane.WARNING_MESSAGE); }
     private void error(String msg) { JOptionPane.showMessageDialog(this, msg, "Ошибка", JOptionPane.ERROR_MESSAGE); }
     private void info(String msg)  { JOptionPane.showMessageDialog(this, msg, "Успех", JOptionPane.INFORMATION_MESSAGE); }
