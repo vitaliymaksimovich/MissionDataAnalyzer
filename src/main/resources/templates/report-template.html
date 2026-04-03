@@ -4,66 +4,106 @@
     <meta charset="UTF-8">
     <title>Отчёт о миссии</title>
     <style>
-        @page { size: A4 portrait; margin: 0; }
+        @page { margin: 20mm; }
         * { box-sizing: border-box; }
 
         html, body {
             margin: 0;
             padding: 0;
-            background: #bfbfbf;
             font-family: "Palatino Linotype", Georgia, serif;
+            background: #e8e0d0;
         }
 
         body {
             display: flex;
             justify-content: center;
             align-items: flex-start;
-            padding: 20px 0;
+            padding: 40px 0 60px 0;
         }
 
         .page {
-            position: relative;
             width: 210mm;
-            height: 297mm;
-            background-image: url("data:image/png;base64,${backgroundImage}");
-            background-size: cover;
-            background-repeat: no-repeat;
-            background-position: center;
-            box-shadow: 0 0 18px rgba(0,0,0,0.25);
-            overflow: hidden;
-            color: #2e3f2e;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            background: #f5f0e8;
+            box-shadow: 0 0 24px rgba(0,0,0,0.25);
+            border: 1px solid #c8b89a;
         }
 
-        .report-text {
-            position: absolute;
-            left: 10.7%;
-            top: 22%;
-            width: 78.5%;
-            height: 60%;
-            padding: 10px 14px;
-            font-size: 10.0px;
-            line-height: 1.35;
-            font-weight: 600;
-            text-shadow: 0 0 2px rgba(0,0,0,0.15);
+        /* шапка */
+        .header {
+            text-align: center;
+            padding: 32px 40px 20px 40px;
+            border-bottom: 2px solid #8a7a5a;
+        }
+
+        .header-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #3a4a2e;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            color: #7a6a4a;
+            letter-spacing: 1px;
+        }
+
+        /* декоративный разделитель */
+        .divider {
+            text-align: center;
+            color: #8a7a5a;
+            font-size: 18px;
+            padding: 6px 0;
+            letter-spacing: 8px;
+        }
+
+        /* тело отчёта */
+        .report-body {
+            padding: 24px 44px 36px 44px;
+            color: #2e3a2e;
+            font-size: 15px;
+            line-height: 1.6;
+            font-weight: 500;
             white-space: pre-wrap;
             overflow-wrap: anywhere;
             word-break: break-word;
-            overflow: hidden;
+        }
+
+        /* подвал */
+        .footer {
+            border-top: 1px solid #c8b89a;
+            padding: 12px 44px;
+            text-align: right;
+            font-size: 11px;
+            color: #9a8a6a;
+            font-style: italic;
         }
 
         @media print {
-            html, body { background: white; padding: 0; margin: 0; }
+            html, body { background: white; padding: 0; }
             body { display: block; }
-            .page { margin: 0; box-shadow: none;
-                    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .page { box-shadow: none; border: none; width: 100%; }
         }
     </style>
 </head>
 <body>
 <div class="page">
-    <div class="report-text">${reportText}</div>
+
+    <div class="header">
+        <div class="header-title">Отчёт о миссии</div>
+        <div class="header-subtitle">Токийский магический колледж — Архив операций</div>
+    </div>
+
+    <div class="divider">✦ ✦ ✦</div>
+
+    <div class="report-body">${reportText}</div>
+
+    <div class="footer">
+        Документ сформирован системой Mission Analyzer
+    </div>
+
 </div>
 </body>
 </html>
