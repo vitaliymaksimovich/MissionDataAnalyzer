@@ -8,6 +8,8 @@ import service.*;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -20,16 +22,16 @@ public class MainFrame extends JFrame {
 
     // --- данные ---
     private final List<Mission> loadedMissions = new ArrayList<>();
-    private final List<File> loadedFiles = new ArrayList<>();
+    private final List<File> loadedFiles       = new ArrayList<>();
     private Mission currentMission;
-    private JButton activeButton = null; // текущая выделенная кнопка
+    private JButton activeButton;
 
     // --- сервисы ---
-    private final MissionBatchService batchService = new MissionBatchService();
+    private final MissionService missionService     = new MissionService();
+    private final MissionBatchService batchService  = new MissionBatchService();
     private final BatchStatsFormatter statsFormatter = new BatchStatsFormatter();
-    private final MissionService missionService = new MissionService();
-    private final AiReviewService aiReviewService = AiServiceFactory.create();
-    private final HtmlReportExporter htmlReportExporter = new HtmlReportExporter();
+    private final AiReviewService aiReviewService   = AiServiceFactory.create();
+    private final HtmlReportExporter htmlExporter   = new HtmlReportExporter();
 
     private final List<ReportFormatter> formatters = List.of(
             new FullReportFormatter(),
@@ -39,19 +41,48 @@ public class MainFrame extends JFrame {
 
     // --- UI ---
     private final JTextArea reportArea = new JTextArea();
-    private final JTextArea aiReviewArea = new JTextArea();
     private final JComboBox<ReportFormatter> reportTypeSelector;
     private final JPanel missionListPanel = new JPanel();
+
+    // gif для помощника
+    private ImageIcon assistantGif;
+    private ImageIcon assistantStandGif;
+    private JButton assistantBtn;
 
     public MainFrame() {
         reportTypeSelector = new JComboBox<>(formatters.toArray(new ReportFormatter[0]));
         reportTypeSelector.setRenderer((list, value, index, isSelected, cellHasFocus) -> {
             JLabel label = new JLabel(value != null ? value.getDisplayName() : "");
-            if (isSelected) { label.setOpaque(true); label.setBackground(list.getSelectionBackground()); }
+            if (isSelected) {
+                label.setOpaque(true);
+                label.setBackground(list.getSelectionBackground());
+            }
             return label;
         });
         reportTypeSelector.addActionListener(e -> refreshReport());
+
+        loadAssistantGif();
         setupWindow();
+    }
+
+    private void loadAssistantGif() {
+        try {
+            java.net.URL sleepUrl = getClass().getResource("/templates/assets/Assistant-sleep.gif");
+            if (sleepUrl != null) {
+                ImageIcon original = new ImageIcon(sleepUrl);
+                Image scaled = original.getImage().getScaledInstance(80, 80, Image.SCALE_DEFAULT);
+                assistantGif = new ImageIcon(scaled);
+            }
+        } catch (Exception ignored) {}
+
+        try {
+            java.net.URL standUrl = getClass().getResource("/templates/assets/Assistant-stand.gif");
+            if (standUrl != null) {
+                ImageIcon original = new ImageIcon(standUrl);
+                Image scaled = original.getImage().getScaledInstance(80, 80, Image.SCALE_DEFAULT);
+                assistantStandGif = new ImageIcon(scaled);
+            }
+        } catch (Exception ignored) {}
     }
 
     private void setupWindow() {
@@ -60,9 +91,26 @@ public class MainFrame extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout(5, 5));
+
         add(buildTopPanel(), BorderLayout.NORTH);
         add(buildCenterPanel(), BorderLayout.CENTER);
-        add(buildAiPanel(), BorderLayout.SOUTH);
+
+        // gif-кнопка поверх всего через LayeredPane
+        assistantBtn = buildAssistantButton();
+        getLayeredPane().add(assistantBtn, JLayeredPane.POPUP_LAYER);
+
+        // перепозиционируем кнопку при resize окна
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                repositionAssistantButton();
+            }
+        });
+    }
+
+    private void repositionAssistantButton() {
+        Dimension size = getContentPane().getSize();
+        assistantBtn.setBounds(size.width - 110, size.height - 95, 80, 80);
     }
 
     private JPanel buildTopPanel() {
@@ -108,22 +156,34 @@ public class MainFrame extends JFrame {
         return split;
     }
 
-    private JPanel buildAiPanel() {
-        aiReviewArea.setEditable(false);
-        aiReviewArea.setLineWrap(true);
-        aiReviewArea.setWrapStyleWord(true);
-        aiReviewArea.setBackground(new Color(235, 248, 235));
-        aiReviewArea.setRows(4);
-        aiReviewArea.setText("AI-обзор пока недоступен.");
+    private JButton buildAssistantButton() {
+        JButton btn = assistantGif != null
+                ? new JButton(assistantGif)
+                : new JButton("AI");
 
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(new JLabel("Заключение от GigaChat"), BorderLayout.NORTH);
-        panel.add(new JScrollPane(aiReviewArea), BorderLayout.CENTER);
-        panel.setPreferredSize(new Dimension(0, 130));
-        return panel;
+        btn.setBorderPainted(false);
+        btn.setContentAreaFilled(false);
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setToolTipText("Спросить GigaChat");
+        btn.setBounds(900, 580, 68, 68);
+
+        btn.addActionListener(e -> {
+            if (currentMission == null) {
+                warn("Сначала откройте миссию для анализа.");
+                return;
+            }
+            // передаём текущий текст отчёта
+            String reportText = reportArea.getText();
+            new AiAssistantDialog(this, aiReviewService, currentMission,
+                    assistantStandGif, reportText).show();
+        });
+
+        return btn;
     }
 
-    // --- загрузка файлов с валидацией на месте ---
+    // --- загрузка файлов ---
+
     private void chooseFiles() {
         JFileChooser fc = new JFileChooser();
         fc.setMultiSelectionEnabled(true);
@@ -134,11 +194,9 @@ public class MainFrame extends JFrame {
         currentMission = null;
         activeButton = null;
         reportArea.setText("");
-        aiReviewArea.setText("AI-обзор пока недоступен.");
 
         List<String> failed = new ArrayList<>();
         for (File file : fc.getSelectedFiles()) {
-            // проверяем файл ещё на стадии загрузки — пробуем распарсить
             try {
                 Mission mission = missionService.loadMission(file);
                 loadedFiles.add(file);
@@ -154,11 +212,9 @@ public class MainFrame extends JFrame {
 
         rebuildMissionList();
 
-        // сразу показываем первую миссию если есть
         if (!loadedMissions.isEmpty()) {
             currentMission = loadedMissions.get(0);
             refreshReport();
-            // первую кнопку выделяем
             if (missionListPanel.getComponentCount() > 0) {
                 Component first = missionListPanel.getComponent(0);
                 if (first instanceof JButton btn) setActiveButton(btn);
@@ -188,7 +244,6 @@ public class MainFrame extends JFrame {
             missionListPanel.add(Box.createVerticalStrut(3));
         }
 
-        // кнопка "Общая статистика" внизу списка — только если есть хоть одна миссия
         if (!loadedMissions.isEmpty()) {
             missionListPanel.add(Box.createVerticalStrut(10));
             JSeparator sep = new JSeparator();
@@ -208,9 +263,11 @@ public class MainFrame extends JFrame {
 
         missionListPanel.revalidate();
         missionListPanel.repaint();
+
+        // после перестройки списка перепозиционируем кнопку
+        SwingUtilities.invokeLater(this::repositionAssistantButton);
     }
 
-    // выделяем нажатую кнопку, снимаем с предыдущей
     private void setActiveButton(JButton btn) {
         if (activeButton != null) {
             activeButton.setBackground(null);
@@ -224,14 +281,12 @@ public class MainFrame extends JFrame {
     private void selectMission(int idx) {
         currentMission = loadedMissions.get(idx);
         refreshReport();
-        aiReviewArea.setText(aiReviewService.generateReview(currentMission));
     }
 
     private void showStats() {
         currentMission = null;
         reportArea.setText(statsFormatter.format(loadedMissions));
         reportArea.setCaretPosition(0);
-        aiReviewArea.setText("AI-обзор недоступен для общей статистики.");
     }
 
     private void refreshReport() {
@@ -246,9 +301,10 @@ public class MainFrame extends JFrame {
         JTextArea logArea = new JTextArea(25, 70);
         logArea.setEditable(false);
         logArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        logArea.setText(AppLogger.getLogs());
+        logArea.setText(service.AppLogger.getLogs());
         logArea.setCaretPosition(logArea.getDocument().getLength());
-        JOptionPane.showMessageDialog(this, new JScrollPane(logArea), "Логи", JOptionPane.INFORMATION_MESSAGE);
+        JOptionPane.showMessageDialog(this, new JScrollPane(logArea), "Логи",
+                JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void saveReportToTxt() {
@@ -263,11 +319,10 @@ public class MainFrame extends JFrame {
 
         String content = "MISSION ANALYZER REPORT\n" + sep + "\n"
                 + "Дата анализа: " + timestamp + "\n"
-                + "Тип отчёта: " + (fmt != null ? fmt.getDisplayName() : "—") + "\n"
+                + "Тип отчёта:   " + (fmt != null ? fmt.getDisplayName() : "—") + "\n"
                 + sep + "\n\n"
-                + reportArea.getText() + "\n\n"
-                + sep + "\n=== ЗАКЛЮЧЕНИЕ ОТ GIGACHAT ===\n"
-                + aiReviewArea.getText() + "\n" + sep + "\n";
+                + reportArea.getText() + "\n"
+                + sep + "\n";
 
         try (FileWriter fw = new FileWriter(file)) {
             fw.write(content);
@@ -283,7 +338,7 @@ public class MainFrame extends JFrame {
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         File file = ensureExtension(fc.getSelectedFile(), ".html");
         try {
-            htmlReportExporter.export(file, reportArea.getText(), aiReviewArea.getText());
+            htmlExporter.export(file, reportArea.getText());
             info("HTML сохранён:\n" + file.getAbsolutePath());
         } catch (IOException e) {
             error("Не удалось сохранить:\n" + e.getMessage());
@@ -291,8 +346,10 @@ public class MainFrame extends JFrame {
     }
 
     private File ensureExtension(File file, String ext) {
-        return file.getName().toLowerCase().endsWith(ext) ? file : new File(file.getAbsolutePath() + ext);
+        return file.getName().toLowerCase().endsWith(ext)
+                ? file : new File(file.getAbsolutePath() + ext);
     }
+
     private void warn(String msg)  { JOptionPane.showMessageDialog(this, msg, "Предупреждение", JOptionPane.WARNING_MESSAGE); }
     private void error(String msg) { JOptionPane.showMessageDialog(this, msg, "Ошибка", JOptionPane.ERROR_MESSAGE); }
     private void info(String msg)  { JOptionPane.showMessageDialog(this, msg, "Успех", JOptionPane.INFORMATION_MESSAGE); }
