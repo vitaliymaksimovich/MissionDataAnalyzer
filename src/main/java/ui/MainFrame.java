@@ -6,10 +6,11 @@ import model.Mission;
 import service.*;
 
 import javax.swing.*;
+import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.LineBorder;
+import javax.swing.border.MatteBorder;
 import java.awt.*;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -22,16 +23,17 @@ public class MainFrame extends JFrame {
 
     // --- данные ---
     private final List<Mission> loadedMissions = new ArrayList<>();
-    private final List<File> loadedFiles       = new ArrayList<>();
+    private final List<File> loadedFiles = new ArrayList<>();
     private Mission currentMission;
     private JButton activeButton;
+    private JButton statsButton;
 
     // --- сервисы ---
-    private final MissionService missionService     = new MissionService();
-    private final MissionBatchService batchService  = new MissionBatchService();
+    private final MissionService missionService = new MissionService();
+    private final MissionBatchService batchService = new MissionBatchService();
     private final BatchStatsFormatter statsFormatter = new BatchStatsFormatter();
-    private final AiReviewService aiReviewService   = AiServiceFactory.create();
-    private final HtmlReportExporter htmlExporter   = new HtmlReportExporter();
+    private final AiReviewService aiReviewService = AiServiceFactory.create();
+    private final HtmlReportExporter htmlExporter = new HtmlReportExporter();
 
     private final List<ReportFormatter> formatters = List.of(
             new FullReportFormatter(),
@@ -49,14 +51,29 @@ public class MainFrame extends JFrame {
     private ImageIcon assistantStandGif;
     private JButton assistantBtn;
 
+    // --- стили ---
+    private static final Color BG_MAIN = new Color(245, 247, 250);
+    private static final Color BG_PANEL = Color.WHITE;
+    private static final Color BG_TOP = new Color(240, 243, 247);
+    private static final Color BG_SELECTED = new Color(210, 226, 248);
+    private static final Color BG_SECONDARY = new Color(233, 239, 247);
+    private static final Color BORDER = new Color(210, 216, 224);
+    private static final Color TEXT = new Color(35, 42, 52);
+
+    private static final Font UI_FONT = new Font("Segoe UI", Font.PLAIN, 14);
+    private static final Font UI_BOLD = new Font("Segoe UI", Font.BOLD, 14);
+    private static final Font TITLE_FONT = new Font("Segoe UI", Font.BOLD, 15);
+    private static final Font REPORT_FONT = new Font("Consolas", Font.PLAIN, 19);
+
     public MainFrame() {
         reportTypeSelector = new JComboBox<>(formatters.toArray(new ReportFormatter[0]));
         reportTypeSelector.setRenderer((list, value, index, isSelected, cellHasFocus) -> {
             JLabel label = new JLabel(value != null ? value.getDisplayName() : "");
-            if (isSelected) {
-                label.setOpaque(true);
-                label.setBackground(list.getSelectionBackground());
-            }
+            label.setFont(UI_BOLD);
+            label.setBorder(new EmptyBorder(6, 10, 6, 10));
+            label.setOpaque(true);
+            label.setBackground(isSelected ? list.getSelectionBackground() : Color.WHITE);
+            label.setForeground(TEXT);
             return label;
         });
         reportTypeSelector.addActionListener(e -> refreshReport());
@@ -70,19 +87,21 @@ public class MainFrame extends JFrame {
             java.net.URL sleepUrl = getClass().getResource("/templates/assets/Assistant-sleep.gif");
             if (sleepUrl != null) {
                 ImageIcon original = new ImageIcon(sleepUrl);
-                Image scaled = original.getImage().getScaledInstance(80, 80, Image.SCALE_DEFAULT);
+                Image scaled = original.getImage().getScaledInstance(88, 88, Image.SCALE_DEFAULT);
                 assistantGif = new ImageIcon(scaled);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         try {
             java.net.URL standUrl = getClass().getResource("/templates/assets/Assistant-stand.gif");
             if (standUrl != null) {
                 ImageIcon original = new ImageIcon(standUrl);
-                Image scaled = original.getImage().getScaledInstance(80, 80, Image.SCALE_DEFAULT);
+                Image scaled = original.getImage().getScaledInstance(88, 88, Image.SCALE_DEFAULT);
                 assistantStandGif = new ImageIcon(scaled);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     private void setupWindow() {
@@ -90,70 +109,129 @@ public class MainFrame extends JFrame {
         setSize(1000, 700);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
-        setLayout(new BorderLayout(5, 5));
+        setLayout(new BorderLayout(8, 8));
+        getContentPane().setBackground(BG_MAIN);
 
         add(buildTopPanel(), BorderLayout.NORTH);
         add(buildCenterPanel(), BorderLayout.CENTER);
-
-        // gif-кнопка поверх всего через LayeredPane
-        assistantBtn = buildAssistantButton();
-        getLayeredPane().add(assistantBtn, JLayeredPane.POPUP_LAYER);
-
-        // перепозиционируем кнопку при resize окна
-        addComponentListener(new ComponentAdapter() {
-            @Override
-            public void componentResized(ComponentEvent e) {
-                repositionAssistantButton();
-            }
-        });
-    }
-
-    private void repositionAssistantButton() {
-        Dimension size = getContentPane().getSize();
-        assistantBtn.setBounds(size.width - 110, size.height - 95, 80, 80);
     }
 
     private JPanel buildTopPanel() {
-        JButton chooseBtn   = new JButton("Выбрать файлы");
-        JButton saveTxtBtn  = new JButton("Сохранить TXT");
-        JButton saveHtmlBtn = new JButton("Сохранить HTML");
-        JButton logsBtn     = new JButton("Логи");
+        JButton chooseBtn = createPrimaryButton("Выбрать файлы");
+        JButton saveTxtBtn = createPrimaryButton("Сохранить TXT");
+        JButton saveHtmlBtn = createPrimaryButton("Сохранить HTML");
+        JButton logsBtn = createSecondaryButton("Логи");
+
+        styleComboBox(reportTypeSelector);
 
         chooseBtn.addActionListener(e -> chooseFiles());
         saveTxtBtn.addActionListener(e -> saveReportToTxt());
         saveHtmlBtn.addActionListener(e -> saveReportToHtml());
         logsBtn.addActionListener(e -> showLogs());
 
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 5));
-        panel.add(chooseBtn);
-        panel.add(new JLabel("Тип отчёта:"));
-        panel.add(reportTypeSelector);
-        panel.add(saveTxtBtn);
-        panel.add(saveHtmlBtn);
-        panel.add(logsBtn);
+        JPanel panel = new JPanel(new BorderLayout(12, 0));
+        panel.setBackground(BG_TOP);
+        panel.setBorder(new CompoundBorder(
+                new MatteBorder(0, 0, 1, 0, BORDER),
+                new EmptyBorder(10, 12, 10, 12)
+        ));
+
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        left.setOpaque(false);
+
+        JLabel reportTypeLabel = new JLabel("Тип отчёта:");
+        reportTypeLabel.setFont(UI_BOLD);
+        reportTypeLabel.setForeground(TEXT);
+
+        left.add(chooseBtn);
+        left.add(reportTypeLabel);
+        left.add(reportTypeSelector);
+        left.add(saveTxtBtn);
+        left.add(saveHtmlBtn);
+
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        right.setOpaque(false);
+        right.add(logsBtn);
+
+        panel.add(left, BorderLayout.WEST);
+        panel.add(right, BorderLayout.EAST);
+
         return panel;
     }
 
     private JSplitPane buildCenterPanel() {
         missionListPanel.setLayout(new BoxLayout(missionListPanel, BoxLayout.Y_AXIS));
-        missionListPanel.setBorder(new EmptyBorder(5, 5, 5, 5));
+        missionListPanel.setBackground(BG_PANEL);
+        missionListPanel.setBorder(new EmptyBorder(8, 8, 8, 8));
 
-        JScrollPane listScroll = new JScrollPane(missionListPanel);
-        listScroll.setPreferredSize(new Dimension(200, 0));
-        listScroll.setBorder(BorderFactory.createTitledBorder("Миссии"));
+        JScrollPane missionScroll = new JScrollPane(missionListPanel);
+        styleScrollPane(missionScroll);
+        missionScroll.setBorder(createTitledBorder("Миссии"));
+        missionScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        missionScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+
+        JPanel leftBottomPanel = buildLeftBottomPanel();
+
+        JPanel leftPanel = new JPanel(new BorderLayout(0, 8));
+        leftPanel.setBackground(BG_MAIN);
+        leftPanel.setBorder(new EmptyBorder(8, 8, 8, 0));
+        leftPanel.setPreferredSize(new Dimension(250, 0));
+        leftPanel.add(missionScroll, BorderLayout.CENTER);
+        leftPanel.add(leftBottomPanel, BorderLayout.SOUTH);
 
         reportArea.setEditable(false);
         reportArea.setLineWrap(true);
         reportArea.setWrapStyleWord(true);
-        reportArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        reportArea.setFont(REPORT_FONT);
+        reportArea.setForeground(TEXT);
+        reportArea.setBackground(BG_PANEL);
+        reportArea.setMargin(new Insets(18, 20, 18, 20));
+        reportArea.setBorder(null);
+        reportArea.setCaretColor(TEXT);
 
         JScrollPane reportScroll = new JScrollPane(reportArea);
-        reportScroll.setBorder(BorderFactory.createTitledBorder("Отчёт"));
+        styleScrollPane(reportScroll);
+        reportScroll.setBorder(createTitledBorder("Отчёт"));
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listScroll, reportScroll);
-        split.setDividerLocation(200);
+        JPanel rightPanel = new JPanel(new BorderLayout());
+        rightPanel.setBackground(BG_MAIN);
+        rightPanel.setBorder(new EmptyBorder(8, 0, 8, 8));
+        rightPanel.add(reportScroll, BorderLayout.CENTER);
+
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, rightPanel);
+        split.setDividerLocation(250);
         split.setResizeWeight(0.0);
+        split.setBorder(null);
+        split.setBackground(BG_MAIN);
+        split.setDividerSize(8);
+
         return split;
+    }
+
+    private JPanel buildLeftBottomPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBackground(BG_PANEL);
+        panel.setBorder(new CompoundBorder(
+                new LineBorder(BORDER, 1, true),
+                new EmptyBorder(10, 10, 10, 10)
+        ));
+
+        statsButton = createSecondaryWideButton("Общая статистика");
+        statsButton.addActionListener(e -> {
+            setActiveButton(statsButton);
+            showStats();
+        });
+        statsButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        assistantBtn = buildAssistantButton();
+        assistantBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        panel.add(statsButton);
+        panel.add(Box.createVerticalStrut(12));
+        panel.add(assistantBtn);
+
+        return panel;
     }
 
     private JButton buildAssistantButton() {
@@ -165,24 +243,19 @@ public class MainFrame extends JFrame {
         btn.setContentAreaFilled(false);
         btn.setFocusPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.setToolTipText("Спросить GigaChat");
-        btn.setBounds(900, 580, 68, 68);
+        btn.setToolTipText("Открыть помощника");
 
         btn.addActionListener(e -> {
             if (currentMission == null) {
                 warn("Сначала откройте миссию для анализа.");
                 return;
             }
-            // передаём текущий текст отчёта
             String reportText = reportArea.getText();
-            new AiAssistantDialog(this, aiReviewService, currentMission,
-                    assistantStandGif, reportText).show();
+            new AiAssistantDialog(this, aiReviewService, currentMission, assistantStandGif, reportText).show();
         });
 
         return btn;
     }
-
-    // --- загрузка файлов ---
 
     private void chooseFiles() {
         JFileChooser fc = new JFileChooser();
@@ -231,50 +304,32 @@ public class MainFrame extends JFrame {
                     ? mission.getMissionId()
                     : loadedFiles.get(i).getName();
 
-            JButton btn = new JButton(label);
-            btn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
-            btn.setHorizontalAlignment(SwingConstants.LEFT);
+            JButton btn = createMissionButton(label);
 
             final int idx = i;
             btn.addActionListener(e -> {
                 setActiveButton(btn);
                 selectMission(idx);
             });
+
             missionListPanel.add(btn);
-            missionListPanel.add(Box.createVerticalStrut(3));
-        }
-
-        if (!loadedMissions.isEmpty()) {
-            missionListPanel.add(Box.createVerticalStrut(10));
-            JSeparator sep = new JSeparator();
-            sep.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2));
-            missionListPanel.add(sep);
-            missionListPanel.add(Box.createVerticalStrut(5));
-
-            JButton statsBtn = new JButton("Общая статистика");
-            statsBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
-            statsBtn.setBackground(new Color(220, 235, 255));
-            statsBtn.addActionListener(e -> {
-                setActiveButton(statsBtn);
-                showStats();
-            });
-            missionListPanel.add(statsBtn);
+            missionListPanel.add(Box.createVerticalStrut(8));
         }
 
         missionListPanel.revalidate();
         missionListPanel.repaint();
-
-        // после перестройки списка перепозиционируем кнопку
-        SwingUtilities.invokeLater(this::repositionAssistantButton);
     }
 
     private void setActiveButton(JButton btn) {
         if (activeButton != null) {
-            activeButton.setBackground(null);
-            activeButton.setOpaque(false);
+            resetMissionButtonStyle(activeButton);
         }
         activeButton = btn;
-        activeButton.setBackground(new Color(180, 210, 255));
+        activeButton.setBackground(BG_SELECTED);
+        activeButton.setBorder(new CompoundBorder(
+                new LineBorder(new Color(155, 185, 225), 1, true),
+                new EmptyBorder(10, 14, 10, 14)
+        ));
         activeButton.setOpaque(true);
     }
 
@@ -300,15 +355,22 @@ public class MainFrame extends JFrame {
     private void showLogs() {
         JTextArea logArea = new JTextArea(25, 70);
         logArea.setEditable(false);
-        logArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        logArea.setFont(new Font("Consolas", Font.PLAIN, 13));
         logArea.setText(service.AppLogger.getLogs());
         logArea.setCaretPosition(logArea.getDocument().getLength());
-        JOptionPane.showMessageDialog(this, new JScrollPane(logArea), "Логи",
-                JOptionPane.INFORMATION_MESSAGE);
+        logArea.setMargin(new Insets(12, 12, 12, 12));
+
+        JScrollPane scrollPane = new JScrollPane(logArea);
+        styleScrollPane(scrollPane);
+
+        JOptionPane.showMessageDialog(this, scrollPane, "Логи", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void saveReportToTxt() {
-        if (reportArea.getText().isBlank()) { warn("Сначала выполните анализ."); return; }
+        if (reportArea.getText().isBlank()) {
+            warn("Сначала выполните анализ.");
+            return;
+        }
         JFileChooser fc = new JFileChooser();
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         File file = ensureExtension(fc.getSelectedFile(), ".txt");
@@ -333,7 +395,10 @@ public class MainFrame extends JFrame {
     }
 
     private void saveReportToHtml() {
-        if (reportArea.getText().isBlank()) { warn("Сначала выполните анализ."); return; }
+        if (reportArea.getText().isBlank()) {
+            warn("Сначала выполните анализ.");
+            return;
+        }
         JFileChooser fc = new JFileChooser();
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         File file = ensureExtension(fc.getSelectedFile(), ".html");
@@ -347,10 +412,104 @@ public class MainFrame extends JFrame {
 
     private File ensureExtension(File file, String ext) {
         return file.getName().toLowerCase().endsWith(ext)
-                ? file : new File(file.getAbsolutePath() + ext);
+                ? file
+                : new File(file.getAbsolutePath() + ext);
     }
 
-    private void warn(String msg)  { JOptionPane.showMessageDialog(this, msg, "Предупреждение", JOptionPane.WARNING_MESSAGE); }
-    private void error(String msg) { JOptionPane.showMessageDialog(this, msg, "Ошибка", JOptionPane.ERROR_MESSAGE); }
-    private void info(String msg)  { JOptionPane.showMessageDialog(this, msg, "Успех", JOptionPane.INFORMATION_MESSAGE); }
+    private JButton createPrimaryButton(String text) {
+        JButton button = new JButton(text);
+        button.setFont(UI_BOLD);
+        button.setForeground(TEXT);
+        button.setBackground(Color.WHITE);
+        button.setFocusPainted(false);
+        button.setBorder(new CompoundBorder(
+                new LineBorder(BORDER, 1, true),
+                new EmptyBorder(8, 16, 8, 16)
+        ));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setPreferredSize(new Dimension(button.getPreferredSize().width, 38));
+        return button;
+    }
+
+    private JButton createSecondaryButton(String text) {
+        JButton button = createPrimaryButton(text);
+        button.setBackground(BG_SECONDARY);
+        return button;
+    }
+
+    private JButton createMissionButton(String text) {
+        JButton button = new JButton(text);
+        button.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+        button.setHorizontalAlignment(SwingConstants.LEFT);
+        button.setFont(UI_BOLD);
+        button.setForeground(TEXT);
+        button.setBackground(Color.WHITE);
+        button.setFocusPainted(false);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setBorder(new CompoundBorder(
+                new LineBorder(BORDER, 1, true),
+                new EmptyBorder(10, 14, 10, 14)
+        ));
+        return button;
+    }
+
+    private JButton createSecondaryWideButton(String text) {
+        JButton button = createSecondaryButton(text);
+        button.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+        return button;
+    }
+
+    private void resetMissionButtonStyle(JButton button) {
+        button.setBackground(Color.WHITE);
+        button.setBorder(new CompoundBorder(
+                new LineBorder(BORDER, 1, true),
+                new EmptyBorder(10, 14, 10, 14)
+        ));
+        button.setOpaque(true);
+    }
+
+    private void styleComboBox(JComboBox<?> comboBox) {
+        comboBox.setFont(UI_BOLD);
+        comboBox.setBackground(Color.WHITE);
+        comboBox.setForeground(TEXT);
+        comboBox.setBorder(new LineBorder(BORDER, 1, true));
+        comboBox.setPreferredSize(new Dimension(185, 38));
+
+        Component editor = comboBox.getEditor().getEditorComponent();
+        if (editor != null) {
+            editor.setFont(UI_BOLD);
+        }
+    }
+
+    private void styleScrollPane(JScrollPane scrollPane) {
+        scrollPane.getViewport().setBackground(BG_PANEL);
+        scrollPane.setBackground(BG_PANEL);
+        scrollPane.setBorder(new LineBorder(BORDER, 1, true));
+    }
+
+    private javax.swing.border.Border createTitledBorder(String title) {
+        return BorderFactory.createTitledBorder(
+                new CompoundBorder(
+                        new LineBorder(BORDER, 1, true),
+                        new EmptyBorder(6, 6, 6, 6)
+                ),
+                title,
+                0,
+                0,
+                TITLE_FONT,
+                TEXT
+        );
+    }
+
+    private void warn(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Предупреждение", JOptionPane.WARNING_MESSAGE);
+    }
+
+    private void error(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Ошибка", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void info(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Успех", JOptionPane.INFORMATION_MESSAGE);
+    }
 }
