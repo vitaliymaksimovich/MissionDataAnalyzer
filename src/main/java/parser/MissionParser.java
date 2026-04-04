@@ -10,20 +10,23 @@ public abstract class MissionParser {
 
     public abstract Mission parse(File file) throws IOException;
 
-    protected void validateFile(File file) {
-        if (file == null) {
-            throw new IllegalArgumentException("File must not be null.");
-        }
-        if (!file.exists()) {
-            throw new IllegalArgumentException("File does not exist: " + file.getAbsolutePath());
-        }
-        if (!file.isFile()) {
-            throw new IllegalArgumentException("Path is not a file: " + file.getAbsolutePath());
-        }
+    protected String readFile(File file) throws IOException {
+        validate(file);
+        return Files.readString(file.toPath());
     }
 
-    protected String readFileContent(File file) throws IOException {
-        validateFile(file);
-        return Files.readString(file.toPath());
+    protected void validate(File file) {
+        if (file == null) {
+            throw new IllegalArgumentException("Файл не указан.");
+        }
+        if (!file.exists()) {
+            throw new IllegalArgumentException("Файл не найден: " + file.getAbsolutePath());
+        }
+        if (!file.isFile()) {
+            throw new IllegalArgumentException("Указанный путь не является файлом: " + file.getAbsolutePath());
+        }
+        if (!file.canRead()) {
+            throw new IllegalArgumentException("Нет прав на чтение файла: " + file.getAbsolutePath());
+        }
     }
 }

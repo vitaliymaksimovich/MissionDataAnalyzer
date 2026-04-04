@@ -2,185 +2,203 @@ package parser;
 
 import model.Curse;
 import model.Mission;
+import model.OperationEvent;
 import model.Sorcerer;
 import model.Technique;
+import model.builder.MissionBuilder;
+import parser.block.BlockParserChain;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
-import java.util.function.Consumer;
+import java.util.HashMap;
+import java.util.Map;
 
 public class TxtMissionParser extends MissionParser {
 
+    private final BlockParserChain blockChain;
+
+    public TxtMissionParser() {
+        this.blockChain = BlockParserChain.createDefault();
+    }
+
     @Override
     public Mission parse(File file) throws IOException {
-        String content = readFileContent(file);
-        String[] lines = content.split("\\R");
+        String[] lines = readFile(file).split("\\R");
+        MissionBuilder builder = new MissionBuilder();
 
-        Mission mission = new Mission();
-        Curse curse = new Curse();
+        // определяем формат по наличию [SECTION]-заголовков
+        boolean isSectionFormat = hasSections(lines);
 
-        Map<Integer, Sorcerer> sorcererMap = new HashMap<>();
-        Map<Integer, Technique> techniqueMap = new HashMap<>();
+        if (isSectionFormat) {
+            parseSectionFormat(lines, builder);
+        } else {
+            parseFlatFormat(lines, builder);
+        }
 
-        Map<String, Consumer<String>> missionHandlers = createMissionHandlers(mission);
+        return builder.build();
+    }
 
-        for (String rawLine : lines) {
-            String line = rawLine.trim();
+    // --- формат: [SECTION] / key=value ---
 
-            if (line.isEmpty() || !line.contains(":")) {
+    private void parseSectionFormat(String[] lines, MissionBuilder builder) {
+        String section = "";
+        Sorcerer currentSorcerer = null;
+        Technique currentTechnique = null;
+        Map<String, String> envMap = new HashMap<>();
+
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+
+            if (line.startsWith("[") && line.endsWith("]")) {
+                // завершаем предыдущие объекты
+                if (currentSorcerer != null) { builder.addSorcerer(currentSorcerer); currentSorcerer = null; }
+                if (currentTechnique != null) { builder.addTechnique(currentTechnique); currentTechnique = null; }
+                if (!envMap.isEmpty()) {
+                    blockChain.handle("environment", envMap, builder);
+                    envMap = new HashMap<>();
+                }
+                section = line.substring(1, line.length() - 1).toUpperCase();
+                if ("SORCERER".equals(section)) currentSorcerer = new Sorcerer();
+                if ("TECHNIQUE".equals(section)) currentTechnique = new Technique();
                 continue;
             }
+
+            if (!line.contains("=")) continue;
+            String[] parts = line.split("=", 2);
+            String key = parts[0].trim();
+            String val = parts[1].trim();
+
+            switch (section) {
+                case "MISSION" -> applyMissionField(key, val, builder);
+                case "CURSE"   -> applyCurseField(key, val, builder);
+                case "SORCERER" -> {
+                    if (currentSorcerer == null) currentSorcerer = new Sorcerer();
+                    applySorcererField(key, val, currentSorcerer);
+                }
+                case "TECHNIQUE" -> {
+                    if (currentTechnique == null) currentTechnique = new Technique();
+                    applyTechniqueField(key, val, currentTechnique);
+                }
+                case "ENVIRONMENT" -> envMap.put(key, val);
+                default -> builder.addUnparsed(line);
+            }
+        }
+
+        // не забываем последние объекты
+        if (currentSorcerer != null) builder.addSorcerer(currentSorcerer);
+        if (currentTechnique != null) builder.addTechnique(currentTechnique);
+        if (!envMap.isEmpty()) blockChain.handle("environment", envMap, builder);
+    }
+
+    // --- формат: key: value / key[i].field: value ---
+
+    private void parseFlatFormat(String[] lines, MissionBuilder builder) {
+        Map<Integer, Sorcerer> sorcerers = new HashMap<>();
+        Map<Integer, Technique> techniques = new HashMap<>();
+
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.isEmpty() || !line.contains(":")) continue;
 
             String[] parts = line.split(":", 2);
             String key = parts[0].trim();
-            String value = parts[1].trim();
-
-            if (missionHandlers.containsKey(key)) {
-                missionHandlers.get(key).accept(value);
-                continue;
-            }
-
-            if (key.startsWith("curse.")) {
-                if (!parseCurseField(curse, key, value)) {
-                    mission.addUnparsedData(line);
-                }
-                continue;
-            }
+            String val = parts[1].trim();
 
             if (key.startsWith("sorcerer[")) {
-                if (!parseSorcererField(sorcererMap, key, value)) {
-                    mission.addUnparsedData(line);
-                }
-                continue;
+                int idx = extractIndex(key);
+                String field = extractField(key);
+                Sorcerer s = sorcerers.computeIfAbsent(idx, i -> new Sorcerer());
+                applySorcererField(field, val, s);
+            } else if (key.startsWith("technique[")) {
+                int idx = extractIndex(key);
+                String field = extractField(key);
+                Technique t = techniques.computeIfAbsent(idx, i -> new Technique());
+                applyTechniqueField(field, val, t);
+            } else if (key.startsWith("curse.")) {
+                applyCurseField(key.substring(6), val, builder);
+            } else {
+                applyMissionField(key, val, builder);
             }
-
-            if (key.startsWith("technique[")) {
-                if (!parseTechniqueField(techniqueMap, key, value)) {
-                    mission.addUnparsedData(line);
-                }
-                continue;
-            }
-
-            mission.addUnparsedData(line);
         }
 
-        mission.setCurse(curse);
-        mission.setSorcerers(toSortedList(sorcererMap));
-        mission.setTechniques(toSortedList(techniqueMap));
-
-        return mission;
+        sorcerers.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> builder.addSorcerer(e.getValue()));
+        techniques.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> builder.addTechnique(e.getValue()));
     }
 
-    private Map<String, Consumer<String>> createMissionHandlers(Mission mission) {
-        Map<String, Consumer<String>> map = new HashMap<>();
+    // --- вспомогательные методы ---
 
-        map.put("missionId", mission::setMissionId);
-        map.put("date", mission::setDate);
-        map.put("location", mission::setLocation);
-        map.put("outcome", mission::setOutcome);
-        map.put("note", mission::setComment);
-        map.put("damageCost", value -> mission.setDamageCost(Double.parseDouble(value)));
-
-        return map;
-    }
-
-    private boolean parseCurseField(Curse curse, String key, String value) {
+    private void applyMissionField(String key, String val, MissionBuilder builder) {
         switch (key) {
-            case "curse.name" -> {
-                curse.setName(value);
-                return true;
-            }
-            case "curse.threatLevel" -> {
-                curse.setThreatLevel(value);
-                return true;
-            }
-            default -> {
-                return false;
-            }
+            case "missionId"  -> builder.missionId(val);
+            case "date"       -> builder.date(val);
+            case "location"   -> builder.location(val);
+            case "outcome"    -> builder.outcome(val);
+            case "damageCost" -> builder.damageCost(parseDouble(val));
+            case "note", "comment" -> builder.comment(val);
+            default           -> builder.addUnparsed(key + ": " + val);
         }
     }
 
-    private boolean parseSorcererField(Map<Integer, Sorcerer> sorcererMap, String key, String value) {
-        int index = extractIndex(key);
-        String fieldName = extractFieldName(key);
+    private void applyCurseField(String key, String val, MissionBuilder builder) {
+        // достаём или создаём curse через builder
+        // храним временно в локальном состоянии через addUnparsed-trick не нужен —
+        // используем отдельный вспомогательный метод с состоянием через поля класса
+        // но чище — разобрать curse полностью перед билдом:
+        // здесь просто накапливаем в builder через специальный промежуточный объект
+        curseBuffer.put(key, val);
+        flushCurse(builder);
+    }
 
-        Sorcerer sorcerer = sorcererMap.computeIfAbsent(index, i -> new Sorcerer());
+    // буфер для сборки Curse из плоских строк
+    private final Map<String, String> curseBuffer = new HashMap<>();
 
-        switch (fieldName) {
-            case "name" -> {
-                sorcerer.setName(value);
-                return true;
-            }
-            case "rank" -> {
-                sorcerer.setRank(value);
-                return true;
-            }
-            default -> {
-                return false;
-            }
+    private void flushCurse(MissionBuilder builder) {
+        if (curseBuffer.containsKey("name") || curseBuffer.containsKey("threatLevel")) {
+            builder.curse(new Curse(
+                    curseBuffer.get("name"),
+                    curseBuffer.get("threatLevel")
+            ));
         }
     }
 
-    private boolean parseTechniqueField(Map<Integer, Technique> techniqueMap, String key, String value) {
-        int index = extractIndex(key);
-        String fieldName = extractFieldName(key);
-
-        Technique technique = techniqueMap.computeIfAbsent(index, i -> new Technique());
-
-        switch (fieldName) {
-            case "name" -> {
-                technique.setName(value);
-                return true;
-            }
-            case "type" -> {
-                technique.setType(value);
-                return true;
-            }
-            case "owner" -> {
-                technique.setOwner(value);
-                return true;
-            }
-            case "damage" -> {
-                technique.setDamage(Double.parseDouble(value));
-                return true;
-            }
-            default -> {
-                return false;
-            }
+    private void applySorcererField(String key, String val, Sorcerer s) {
+        switch (key) {
+            case "name" -> s.setName(val);
+            case "rank" -> s.setRank(val);
         }
+    }
+
+    private void applyTechniqueField(String key, String val, Technique t) {
+        switch (key) {
+            case "name"   -> t.setName(val);
+            case "type"   -> t.setType(val);
+            case "owner"  -> t.setOwner(val);
+            case "damage" -> t.setDamage(parseDouble(val));
+        }
+    }
+
+    private boolean hasSections(String[] lines) {
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.startsWith("[") && t.endsWith("]")) return true;
+        }
+        return false;
     }
 
     private int extractIndex(String key) {
-        int start = key.indexOf('[');
-        int end = key.indexOf(']');
-
-        if (start == -1 || end == -1 || end <= start + 1) {
-            throw new IllegalArgumentException("Invalid indexed key: " + key);
-        }
-
-        return Integer.parseInt(key.substring(start + 1, end));
+        return Integer.parseInt(key.substring(key.indexOf('[') + 1, key.indexOf(']')));
     }
 
-    private String extractFieldName(String key) {
-        int dotIndex = key.lastIndexOf('.');
-
-        if (dotIndex == -1 || dotIndex == key.length() - 1) {
-            throw new IllegalArgumentException("Invalid field key: " + key);
-        }
-
-        return key.substring(dotIndex + 1);
+    private String extractField(String key) {
+        return key.substring(key.lastIndexOf('.') + 1);
     }
 
-    private <T> List<T> toSortedList(Map<Integer, T> map) {
-        List<Integer> indexes = new ArrayList<>(map.keySet());
-        Collections.sort(indexes);
-
-        List<T> result = new ArrayList<>();
-        for (Integer index : indexes) {
-            result.add(map.get(index));
-        }
-
-        return result;
+    private double parseDouble(String v) {
+        try { return Double.parseDouble(v); } catch (NumberFormatException e) { return 0; }
     }
 }

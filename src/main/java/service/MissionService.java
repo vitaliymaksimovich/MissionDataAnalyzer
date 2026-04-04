@@ -2,19 +2,27 @@ package service;
 
 import model.Mission;
 import parser.MissionParser;
-import parser.ParserFactory;
+import parser.ParserRegistry;
+import parser.ParserRegistryConfig;
+import parser.decorator.LoggingParserDecorator;
+import parser.decorator.ValidatingParserDecorator;
 
 import java.io.File;
 import java.io.IOException;
 
 public class MissionService {
 
-    public Mission loadMission(File file) throws IOException {
-        if (file == null) {
-            throw new IllegalArgumentException("File must not be null.");
-        }
+    private final ParserRegistry registry;
 
-        MissionParser parser = ParserFactory.createParser(file);
-        return parser.parse(file);
+    public MissionService() {
+        this.registry = ParserRegistryConfig.createDefault();
+    }
+
+    public Mission loadMission(File file) throws IOException {
+        MissionParser parser = registry.getParser(file);
+        MissionParser decorated = new LoggingParserDecorator(
+                new ValidatingParserDecorator(parser)
+        );
+        return decorated.parse(file);
     }
 }
