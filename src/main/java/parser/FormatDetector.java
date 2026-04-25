@@ -3,15 +3,20 @@ package parser;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.List;
 
 public class FormatDetector {
 
     private FormatDetector() {}
 
+    /** Определение формата по содержимому файла */
     public static String detect(File file) throws IOException {
-        List<String> lines = Files.readAllLines(file.toPath());
-        for (String line : lines) {
+        String content = Files.readString(file.toPath());
+        return detect(content);
+    }
+
+    /** Определение формата по строковому содержимому (для REST API / InputStream) */
+    public static String detect(String content) {
+        for (String line : content.lines().toList()) {
             String t = line.trim();
             if (t.isEmpty()) continue;
             if (t.startsWith("{"))                    return "json";

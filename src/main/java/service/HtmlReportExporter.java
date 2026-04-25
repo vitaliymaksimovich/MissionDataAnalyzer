@@ -155,8 +155,16 @@ public class HtmlReportExporter {
         }
     }
 
+    /**
+     * Экранирует спецсимволы HTML — защищает от поломки вёрстки
+     * и XSS, если пользовательские данные содержат < > " ' &
+     */
     private String escapeHtml(String text) {
         if (text == null) return "";
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        return text.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace("\"", "&quot;")
+                   .replace("'", "&#x27;");
     }
 }

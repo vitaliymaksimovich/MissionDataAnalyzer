@@ -2,16 +2,13 @@ package service;
 
 import model.Mission;
 
-public class SummaryReportFormatter implements ReportFormatter {
+public class SummaryReportFormatter extends AbstractReportFormatter {
 
     @Override
     public String getDisplayName() { return "Краткое резюме"; }
 
     @Override
-    public String format(Mission mission) {
-        if (mission == null) return "Данные миссии недоступны.";
-        StringBuilder sb = new StringBuilder();
-
+    protected void buildReport(StringBuilder sb, Mission mission) {
         sb.append("=== КРАТКОЕ РЕЗЮМЕ ===\n");
         sb.append("  Миссия:   ").append(orMissing(mission.getMissionId())).append("\n");
         sb.append("  Дата:     ").append(orMissing(mission.getDate())).append("\n");
@@ -33,11 +30,5 @@ public class SummaryReportFormatter implements ReportFormatter {
 
         if (mission.getDamageCost() > 0)
             sb.append("  Ущерб:    ").append(mission.getDamageCost()).append("\n");
-
-        return sb.toString();
-    }
-
-    private String orMissing(String v) {
-        return (v == null || v.isBlank()) ? "[не указано]" : v;
     }
 }

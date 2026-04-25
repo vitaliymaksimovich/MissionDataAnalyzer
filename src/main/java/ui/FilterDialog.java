@@ -1,25 +1,31 @@
 package ui;
 
+import model.Mission;
 import service.filter.*;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.util.Set;
 
 public class FilterDialog extends JDialog {
 
+    private final Set<Mission> favorites;
     private final FilterChain filterChain;
     private boolean applied = false;
 
     private final JComboBox<String> threatLevelBox;
     private final JComboBox<String> outcomeBox;
+    private final JTextField sorcererField = new JTextField(10);
     private final JTextField dateFromField = new JTextField(10);
     private final JTextField dateToField   = new JTextField(10);
+    private final JCheckBox favoritesOnlyBox = new JCheckBox("Только избранные");
 
     private static final String ANY = "Любой";
 
-    public FilterDialog(JFrame parent, FilterChain filterChain) {
+    public FilterDialog(JFrame parent, FilterChain filterChain, Set<Mission> favorites) {
         super(parent, "Фильтры миссий", true);
+        this.favorites = favorites;
         this.filterChain = filterChain;
 
         threatLevelBox = new JComboBox<>(new String[]{
@@ -32,7 +38,7 @@ public class FilterDialog extends JDialog {
         // восстанавливаем текущее состояние фильтров
         restoreState();
 
-        setSize(360, 300);
+        setSize(360, 380);
         setLocationRelativeTo(parent);
         setResizable(false);
         buildUI();
@@ -40,19 +46,18 @@ public class FilterDialog extends JDialog {
 
     private void restoreState() {
         for (MissionFilter f : filterChain.getFilters()) {
-            if (f instanceof ThreatLevelFilter) {
-                String val = f.getDisplayName().replace("Уровень угрозы: ", "");
-                threatLevelBox.setSelectedItem(val);
-            } else if (f instanceof OutcomeFilter) {
-                String val = f.getDisplayName().replace("Результат: ", "");
-                outcomeBox.setSelectedItem(val);
-            } else if (f instanceof DateRangeFilter) {
-                String val = f.getDisplayName().replace("Дата: ", "");
-                String[] parts = val.split(" — ");
-                if (parts.length == 2) {
-                    dateFromField.setText(parts[0].trim());
-                    dateToField.setText(parts[1].trim());
+            switch (f.getFilterId()) {
+                case "threatLevel" -> threatLevelBox.setSelectedItem(f.getValue());
+                case "outcome"     -> outcomeBox.setSelectedItem(f.getValue());
+                case "sorcerer"    -> sorcererField.setText(f.getValue());
+                case "dateRange"   -> {
+                    String[] parts = f.getValue().split("\\|", 2);
+                    if (parts.length == 2) {
+                        dateFromField.setText(parts[0]);
+                        dateToField.setText(parts[1]);
+                    }
                 }
+                case "favorites"   -> favoritesOnlyBox.setSelected(true);
             }
         }
     }
@@ -66,13 +71,19 @@ public class FilterDialog extends JDialog {
 
         addRow(panel, gbc, 0, "Уровень угрозы:", threatLevelBox);
         addRow(panel, gbc, 1, "Результат:",      outcomeBox);
-        addRow(panel, gbc, 2, "Дата от:",        dateFromField);
-        addRow(panel, gbc, 3, "Дата до:",        dateToField);
+        addRow(panel, gbc, 2, "Участник:",        sorcererField);
+        addRow(panel, gbc, 3, "Дата от:",         dateFromField);
+        addRow(panel, gbc, 4, "Дата до:",         dateToField);
+
+        // Чекбокс «Только избранные» — занимает обе колонки
+        favoritesOnlyBox.setOpaque(false);
+        gbc.gridx = 0; gbc.gridy = 5; gbc.gridwidth = 2; gbc.weightx = 1.0;
+        panel.add(favoritesOnlyBox, gbc);
 
         JLabel hint = new JLabel("Формат даты: 2024-10-12");
         hint.setFont(new Font("Segoe UI", Font.ITALIC, 11));
-        hint.setForeground(Color.GRAY);
-        gbc.gridx = 0; gbc.gridy = 4; gbc.gridwidth = 2;
+        hint.setForeground(AppTheme.textSecondary());
+        gbc.gridx = 0; gbc.gridy = 6; gbc.gridwidth = 2;
         panel.add(hint, gbc);
 
         JButton applyBtn  = new JButton("Применить");
@@ -113,10 +124,17 @@ public class FilterDialog extends JDialog {
         if (outcome != null && !outcome.equals(ANY))
             filterChain.add(new OutcomeFilter(outcome));
 
+        String sorcerer = sorcererField.getText().trim();
+        if (!sorcerer.isBlank())
+            filterChain.add(new SorcererFilter(sorcerer));
+
         String from = dateFromField.getText().trim();
         String to   = dateToField.getText().trim();
         if (!from.isBlank() || !to.isBlank())
             filterChain.add(new DateRangeFilter(from, to));
+
+        if (favoritesOnlyBox.isSelected())
+            filterChain.add(new FavoritesFilter(favorites));
 
         applied = true;
         dispose();
@@ -125,8 +143,10 @@ public class FilterDialog extends JDialog {
     private void resetFilters() {
         threatLevelBox.setSelectedIndex(0);
         outcomeBox.setSelectedIndex(0);
+        sorcererField.setText("");
         dateFromField.setText("");
         dateToField.setText("");
+        favoritesOnlyBox.setSelected(false);
         filterChain.clear();
         applied = true;
         dispose();

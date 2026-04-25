@@ -5,6 +5,7 @@ import parser.MissionParser;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -28,6 +29,22 @@ public class LoggingParserDecorator extends MissionParser {
             return mission;
         } catch (Exception e) {
             log("ОШИБКА: " + file.getName() + " — " + e.getMessage());
+            throw e;
+        }
+    }
+
+    /** Делегирование потокового парсинга (REST API) с логированием */
+    @Override
+    public Mission parse(InputStream in) throws IOException {
+        log("Начало разбора из потока данных");
+        long start = System.currentTimeMillis();
+        try {
+            Mission mission = delegate.parse(in);
+            long ms = System.currentTimeMillis() - start;
+            log("Готово: поток данных [" + ms + " мс] → миссия " + mission.getMissionId());
+            return mission;
+        } catch (Exception e) {
+            log("ОШИБКА: поток данных — " + e.getMessage());
             throw e;
         }
     }

@@ -2,7 +2,6 @@ package parser;
 
 import model.Curse;
 import model.Mission;
-import model.OperationEvent;
 import model.Sorcerer;
 import model.Technique;
 import model.builder.MissionBuilder;
@@ -12,8 +11,14 @@ import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 public class TxtMissionParser extends MissionParser {
+
+    /** Секции, обрабатываемые напрямую (не через blockChain) */
+    private static final Set<String> CORE_SECTIONS = Set.of(
+            "MISSION", "CURSE", "SORCERER", "TECHNIQUE"
+    );
 
     private final BlockParserChain blockChain;
 
@@ -26,10 +31,7 @@ public class TxtMissionParser extends MissionParser {
         String[] lines = readFile(file).split("\\R");
         MissionBuilder builder = new MissionBuilder();
 
-        // определяем формат по наличию [SECTION]-заголовков
-        boolean isSectionFormat = hasSections(lines);
-
-        if (isSectionFormat) {
+        if (hasSections(lines)) {
             parseSectionFormat(lines, builder);
         } else {
             parseFlatFormat(lines, builder);
@@ -44,7 +46,9 @@ public class TxtMissionParser extends MissionParser {
         String section = "";
         Sorcerer currentSorcerer = null;
         Technique currentTechnique = null;
-        Map<String, String> envMap = new HashMap<>();
+        // данные неизвестных секций для делегирования в blockChain
+        Map<String, String> blockData = new HashMap<>();
+        String blockSectionName = null;
 
         for (String raw : lines) {
             String line = raw.trim();
@@ -54,13 +58,16 @@ public class TxtMissionParser extends MissionParser {
                 // завершаем предыдущие объекты
                 if (currentSorcerer != null) { builder.addSorcerer(currentSorcerer); currentSorcerer = null; }
                 if (currentTechnique != null) { builder.addTechnique(currentTechnique); currentTechnique = null; }
-                if (!envMap.isEmpty()) {
-                    blockChain.handle("environment", envMap, builder);
-                    envMap = new HashMap<>();
-                }
+                flushBlockData(blockSectionName, blockData, builder);
+
                 section = line.substring(1, line.length() - 1).toUpperCase();
                 if ("SORCERER".equals(section)) currentSorcerer = new Sorcerer();
                 if ("TECHNIQUE".equals(section)) currentTechnique = new Technique();
+
+                // если секция не core — готовимся к накоплению данных для blockChain
+                if (!CORE_SECTIONS.contains(section)) {
+                    blockSectionName = toBlockName(section);
+                }
                 continue;
             }
 
@@ -69,26 +76,50 @@ public class TxtMissionParser extends MissionParser {
             String key = parts[0].trim();
             String val = parts[1].trim();
 
-            switch (section) {
-                case "MISSION" -> applyMissionField(key, val, builder);
-                case "CURSE"   -> applyCurseField(key, val, builder);
-                case "SORCERER" -> {
-                    if (currentSorcerer == null) currentSorcerer = new Sorcerer();
-                    applySorcererField(key, val, currentSorcerer);
+            if (CORE_SECTIONS.contains(section)) {
+                switch (section) {
+                    case "MISSION" -> applyMissionField(key, val, builder);
+                    case "CURSE"   -> applyCurseField(key, val, builder);
+                    case "SORCERER" -> {
+                        if (currentSorcerer == null) currentSorcerer = new Sorcerer();
+                        applySorcererField(key, val, currentSorcerer);
+                    }
+                    case "TECHNIQUE" -> {
+                        if (currentTechnique == null) currentTechnique = new Technique();
+                        applyTechniqueField(key, val, currentTechnique);
+                    }
                 }
-                case "TECHNIQUE" -> {
-                    if (currentTechnique == null) currentTechnique = new Technique();
-                    applyTechniqueField(key, val, currentTechnique);
-                }
-                case "ENVIRONMENT" -> envMap.put(key, val);
-                default -> builder.addUnparsed(line);
+            } else {
+                // неизвестная секция — накапливаем для blockChain
+                blockData.put(key, val);
             }
         }
 
-        // не забываем последние объекты
+        // сбрасываем последние объекты
         if (currentSorcerer != null) builder.addSorcerer(currentSorcerer);
         if (currentTechnique != null) builder.addTechnique(currentTechnique);
-        if (!envMap.isEmpty()) blockChain.handle("environment", envMap, builder);
+        flushBlockData(blockSectionName, blockData, builder);
+    }
+
+    /** Сбрасывает накопленные данные секции в blockChain */
+    private void flushBlockData(String blockName, Map<String, String> data, MissionBuilder builder) {
+        if (blockName != null && !data.isEmpty()) {
+            if (!blockChain.handle(blockName, data, builder)) {
+                data.forEach((k, v) -> builder.addUnparsed(k + ": " + v));
+            }
+        }
+        data.clear();
+    }
+
+    /** Конвертирует UPPER_SNAKE_CASE → camelCase: ENVIRONMENT → environment, CIVILIAN_IMPACT → civilianImpact */
+    private String toBlockName(String section) {
+        String[] parts = section.toLowerCase().split("_");
+        StringBuilder sb = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            sb.append(Character.toUpperCase(parts[i].charAt(0)));
+            sb.append(parts[i].substring(1));
+        }
+        return sb.toString();
     }
 
     // --- формат: key: value / key[i].field: value ---
@@ -145,16 +176,10 @@ public class TxtMissionParser extends MissionParser {
     }
 
     private void applyCurseField(String key, String val, MissionBuilder builder) {
-        // достаём или создаём curse через builder
-        // храним временно в локальном состоянии через addUnparsed-trick не нужен —
-        // используем отдельный вспомогательный метод с состоянием через поля класса
-        // но чище — разобрать curse полностью перед билдом:
-        // здесь просто накапливаем в builder через специальный промежуточный объект
         curseBuffer.put(key, val);
         flushCurse(builder);
     }
 
-    // буфер для сборки Curse из плоских строк
     private final Map<String, String> curseBuffer = new HashMap<>();
 
     private void flushCurse(MissionBuilder builder) {

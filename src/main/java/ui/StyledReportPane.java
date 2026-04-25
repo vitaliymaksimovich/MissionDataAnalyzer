@@ -10,19 +10,25 @@ import java.util.regex.Pattern;
 
 public class StyledReportPane extends JTextPane {
 
-    // --- цвета ---
-    private static final Color COLOR_SECTION = new Color(45, 90, 55);
-    private static final Color COLOR_MISSING = new Color(160, 160, 165);
-    private static final Color COLOR_WARNING = new Color(200, 50, 50);
-    private static final Color COLOR_SUCCESS = new Color(40, 140, 70);
-    private static final Color COLOR_FAILURE = new Color(190, 45, 45);
-    private static final Color COLOR_PARTIAL = new Color(195, 120, 20);
-    private static final Color COLOR_SPECIAL = new Color(170, 30, 30);
-    private static final Color COLOR_HIGH = new Color(200, 90, 20);
-    private static final Color COLOR_MEDIUM = new Color(180, 155, 20);
-    private static final Color COLOR_LOW = new Color(40, 140, 70);
-    private static final Color COLOR_LABEL = new Color(80, 100, 120);
-    private static final Color COLOR_DEFAULT = new Color(35, 42, 52);
+    // --- цвета подсветки (адаптируются к теме) ---
+
+    private static Color sectionColor() {
+        return AppTheme.isDark() ? new Color(100, 180, 120) : new Color(45, 90, 55);
+    }
+    private static Color labelColor() {
+        return AppTheme.isDark() ? new Color(120, 150, 180) : new Color(80, 100, 120);
+    }
+
+    // Яркие акценты — одинаково читаемы на обоих фонах
+    private static final Color COLOR_MISSING = new Color(140, 140, 148);
+    private static final Color COLOR_WARNING = new Color(220, 70, 70);
+    private static final Color COLOR_SUCCESS = new Color(60, 175, 90);
+    private static final Color COLOR_FAILURE = new Color(210, 60, 60);
+    private static final Color COLOR_PARTIAL = new Color(215, 140, 30);
+    private static final Color COLOR_SPECIAL = new Color(200, 50, 50);
+    private static final Color COLOR_HIGH    = new Color(220, 110, 30);
+    private static final Color COLOR_MEDIUM  = new Color(200, 170, 30);
+    private static final Color COLOR_LOW     = new Color(60, 175, 90);
 
     private static final Map<Pattern, Color> WORD_PATTERNS = new HashMap<>();
 
@@ -72,7 +78,7 @@ public class StyledReportPane extends JTextPane {
         Style base = doc.addStyle("base", null);
         StyleConstants.setFontFamily(base, reportFontFamily);
         StyleConstants.setFontSize(base, reportFontSize);
-        StyleConstants.setForeground(base, COLOR_DEFAULT);
+        StyleConstants.setForeground(base, AppTheme.text());
 
         try {
             doc.insertString(0, text, base);
@@ -81,8 +87,8 @@ public class StyledReportPane extends JTextPane {
             return;
         }
 
-        applyPattern(doc, Pattern.compile("=== .+ ==="), COLOR_SECTION, true, false);
-        applyPattern(doc, Pattern.compile("(?m)^  [\\wА-Яа-яЁё ]+: "), COLOR_LABEL, false, false);
+        applyPattern(doc, Pattern.compile("=== .+ ==="), sectionColor(), true, false);
+        applyPattern(doc, Pattern.compile("(?m)^  [\\wА-Яа-яЁё ]+: "), labelColor(), false, false);
 
         for (Map.Entry<Pattern, Color> entry : WORD_PATTERNS.entrySet()) {
             applyPattern(doc, entry.getKey(), entry.getValue(), true, false);

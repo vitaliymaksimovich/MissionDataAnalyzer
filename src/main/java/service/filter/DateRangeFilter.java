@@ -2,6 +2,10 @@ package service.filter;
 
 import model.Mission;
 
+/**
+ * Паттерн: Chain of Responsibility — конкретный обработчик.
+ * Критерий: дата миссии попадает в заданный диапазон [from, to] включительно.
+ */
 public class DateRangeFilter implements MissionFilter {
 
     private final String from; // включительно, формат yyyy-MM-dd
@@ -24,4 +28,10 @@ public class DateRangeFilter implements MissionFilter {
 
     @Override
     public String getDisplayName() { return "Дата: " + from + " — " + to; }
+
+    @Override
+    public String getFilterId() { return "dateRange"; }
+
+    @Override
+    public String getValue() { return from + "|" + to; }
 }

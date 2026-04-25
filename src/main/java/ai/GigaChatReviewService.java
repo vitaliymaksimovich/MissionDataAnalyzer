@@ -3,6 +3,7 @@ package ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import model.Mission;
+import model.Sorcerer;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -13,17 +14,34 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.security.KeyStore;
 import java.security.SecureRandom;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 public class GigaChatReviewService implements AiReviewService {
 
     private static final String TOKEN_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth";
     private static final String CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions";
     private static final String CERTIFICATE_RESOURCE_PATH = "/certs/russian_trusted_root_ca_pem.crt";
+
+    // Таймауты HTTP — чтобы запрос не висел бесконечно при проблемах с сетью
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
+
+    // Единый системный промпт — задаёт стиль всех ответов
+    private static final String SYSTEM_PROMPT = """
+            Ты — аналитик штаба магов из вселенной Jujutsu Kaisen. \
+            Отвечай строго на русском языке. \
+            Будь лаконичен: 3-6 предложений, без воды и повторов. \
+            Используй конкретные данные из миссии (имена, числа, факты). \
+            Не додумывай то, чего нет в данных. \
+            Если результат миссии FAILURE — не приукрашивай, констатируй провал. \
+            Отвечай только по теме запроса, не отвлекайся на посторонние темы.""";
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -39,65 +57,85 @@ public class GigaChatReviewService implements AiReviewService {
         this.model = readEnvOrDefault("GIGACHAT_MODEL", "GigaChat");
     }
 
-    // --- публичные методы интерфейса ---
-
-    @Override
-    public String generateReview(Mission mission) {
-        return callWithPrompt(mission,
-                "Дай короткий понятный обзор миссии на русском языке в 3-5 предложениях.");
-    }
+    // --- методы интерфейса ---
 
     @Override
     public String generateBriefAnalysis(Mission mission) {
-        return callWithPrompt(mission,
-                "Дай краткий анализ миссии в 3-4 предложениях. " +
-                        "Оцени угрозу, действия магов и итог.");
+        return callSingle(mission, 500,
+                "Дай краткий анализ миссии: угроза, действия участников, итог.");
     }
 
     @Override
     public String generateDetailedAnalysis(Mission mission) {
-        return callWithPrompt(mission,
-                "Дай подробный анализ миссии. Разбери каждый этап: " +
-                        "угрозу, действия участников, применённые техники, итог и последствия.");
+        return callSingle(mission, 700,
+                "Дай подробный анализ миссии по пунктам: " +
+                        "1) Угроза 2) Действия команды 3) Итог и последствия.");
     }
 
     @Override
     public String findProblems(Mission mission) {
-        return callWithPrompt(mission,
-                "Найди проблемы и слабые места в проведении миссии. " +
-                        "Что пошло не так? Какие ошибки допустили маги?");
+        return callSingle(mission, 600,
+                "Найди слабые места и ошибки в проведении миссии. Что можно было сделать лучше?");
     }
 
     @Override
     public String generateRecommendations(Mission mission) {
-        return callWithPrompt(mission,
-                "Дай конкретные рекомендации для улучшения результатов подобных миссий. " +
-                        "Что стоит изменить в тактике, составе команды, подготовке?");
+        return callSingle(mission, 600,
+                "Дай 3-5 конкретных рекомендаций по улучшению тактики для подобных миссий.");
     }
 
     @Override
     public String generateStory(Mission mission) {
-        return callWithPrompt(mission,
-                "Напиши короткую художественную историю (5-7 предложений) " +
-                        "от лица участника этой миссии. Атмосферно, в стиле аниме.");
+        String outcome = mission.getOutcome() != null ? mission.getOutcome() : "UNKNOWN";
+        String moodHint = switch (outcome) {
+            case "FAILURE" -> " История должна закончиться поражением и горечью.";
+            case "PARTIAL_SUCCESS" -> " Финал неоднозначный — победа далась дорогой ценой.";
+            default -> "";
+        };
+        return callSingle(mission, 600,
+                "Напиши короткую атмосферную историю (5-7 предложений) от лица одного из участников миссии. " +
+                        "Стиль — аниме/Jujutsu Kaisen." + moodHint);
     }
 
-    // --- общий метод вызова API ---
+    @Override
+    public String customQuestion(Mission mission, String question) {
+        return callSingle(mission, 600,
+                "Ответь на вопрос пользователя по данным этой миссии: " + question);
+    }
 
-    private String callWithPrompt(Mission mission, String instruction) {
+    @Override
+    public String analyzeBatch(List<Mission> missions) {
+        if (missions == null || missions.isEmpty())
+            return "Нет загруженных миссий для анализа.";
+        if (authorizationKey == null || authorizationKey.isBlank())
+            return "AI недоступен: не задана переменная GIGACHAT_AUTH_KEY.";
+        try {
+            String accessToken = getAccessToken();
+            String prompt = "Дай общий анализ по всем загруженным миссиям: " +
+                    "тенденции, сильные и слабые стороны команды, главные выводы.\n\n" +
+                    buildBatchPrompt(missions);
+            return requestReview(accessToken, prompt, 700);
+        } catch (Exception e) {
+            return "AI недоступен: " + e.getMessage();
+        }
+    }
+
+    // --- вызов API ---
+
+    private String callSingle(Mission mission, int maxTokens, String instruction) {
         if (mission == null) return "AI недоступен: данные миссии отсутствуют.";
         if (authorizationKey == null || authorizationKey.isBlank())
             return "AI недоступен: не задана переменная GIGACHAT_AUTH_KEY.";
         try {
             String accessToken = getAccessToken();
             String prompt = instruction + "\n\n" + buildPrompt(mission);
-            return requestReview(accessToken, prompt);
+            return requestReview(accessToken, prompt, maxTokens);
         } catch (Exception e) {
             return "AI недоступен: " + e.getMessage();
         }
     }
 
-    // --- приватные методы (HTTP, промпт) ---
+    // --- HTTP ---
 
     private HttpClient createSecureHttpClient() {
         try {
@@ -113,7 +151,10 @@ public class GigaChatReviewService implements AiReviewService {
                 tmf.init(ks);
                 SSLContext ssl = SSLContext.getInstance("TLS");
                 ssl.init(null, tmf.getTrustManagers(), new SecureRandom());
-                return HttpClient.newBuilder().sslContext(ssl).build();
+                return HttpClient.newBuilder()
+                        .sslContext(ssl)
+                        .connectTimeout(CONNECT_TIMEOUT)
+                        .build();
             }
         } catch (Exception e) {
             throw new IllegalStateException("Не удалось создать HTTP-клиент: " + e.getMessage(), e);
@@ -123,6 +164,7 @@ public class GigaChatReviewService implements AiReviewService {
     private String getAccessToken() throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(TOKEN_URL))
+                .timeout(REQUEST_TIMEOUT)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Accept", "application/json")
                 .header("RqUID", UUID.randomUUID().toString())
@@ -141,21 +183,23 @@ public class GigaChatReviewService implements AiReviewService {
         return tokenNode.asText();
     }
 
-    private String requestReview(String accessToken, String prompt) throws IOException, InterruptedException {
+    private String requestReview(String accessToken, String prompt, int maxTokens)
+            throws IOException, InterruptedException {
         JsonNode body = objectMapper.createObjectNode()
                 .put("model", model)
                 .put("temperature", 0.3)
-                .put("max_tokens", 400)
+                .put("max_tokens", maxTokens)
                 .set("messages", objectMapper.createArrayNode()
                         .add(objectMapper.createObjectNode()
                                 .put("role", "system")
-                                .put("content", "Ты аналитик штаба магов. Отвечай на русском языке."))
+                                .put("content", SYSTEM_PROMPT))
                         .add(objectMapper.createObjectNode()
                                 .put("role", "user")
                                 .put("content", prompt)));
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(CHAT_URL))
+                .timeout(REQUEST_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .header("Authorization", "Bearer " + accessToken)
@@ -175,6 +219,8 @@ public class GigaChatReviewService implements AiReviewService {
         return content.asText();
     }
 
+    // --- построение промптов ---
+
     private String buildPrompt(Mission mission) {
         StringBuilder sb = new StringBuilder("Данные миссии:\n");
         sb.append("ID: ").append(safe(mission.getMissionId())).append("\n");
@@ -182,17 +228,65 @@ public class GigaChatReviewService implements AiReviewService {
         sb.append("Локация: ").append(safe(mission.getLocation())).append("\n");
         sb.append("Результат: ").append(safe(mission.getOutcome())).append("\n");
         sb.append("Ущерб: ").append(mission.getDamageCost()).append("\n");
+
         if (mission.getCurse() != null) {
             sb.append("Проклятие: ").append(safe(mission.getCurse().getName())).append("\n");
             sb.append("Уровень угрозы: ").append(safe(mission.getCurse().getThreatLevel())).append("\n");
         }
+
         if (mission.getSorcerers() != null && !mission.getSorcerers().isEmpty()) {
             sb.append("Участники: ");
-            mission.getSorcerers().forEach(s -> sb.append(s.getName()).append(" (").append(s.getRank()).append(") "));
+            mission.getSorcerers().forEach(s ->
+                    sb.append(safe(s.getName())).append(" (").append(safe(s.getRank())).append(") "));
             sb.append("\n");
         }
+
+        if (mission.getTechniques() != null && !mission.getTechniques().isEmpty()) {
+            sb.append("Техники: ");
+            mission.getTechniques().forEach(t ->
+                    sb.append(safe(t.getName())).append(" "));
+            sb.append("\n");
+        }
+
+        if (mission.getCivilianImpact() != null) {
+            sb.append("Гражданские — эвакуировано: ")
+                    .append(mission.getCivilianImpact().getEvacuated())
+                    .append(", пострадавших: ")
+                    .append(mission.getCivilianImpact().getInjured()).append("\n");
+        }
+
+        if (mission.getEconomicAssessment() != null) {
+            var ea = mission.getEconomicAssessment();
+            sb.append("Экономика — общий ущерб: ").append(ea.getTotalDamageCost())
+                    .append(", инфраструктура: ").append(ea.getInfrastructureDamage())
+                    .append(", восстановление: ").append(ea.getRecoveryEstimateDays()).append(" дней\n");
+        }
+
+        if (mission.getOperationTags() != null && !mission.getOperationTags().isEmpty()) {
+            sb.append("Теги: ").append(String.join(", ", mission.getOperationTags())).append("\n");
+        }
+
         if (mission.getComment() != null && !mission.getComment().isBlank())
             sb.append("Комментарий: ").append(mission.getComment()).append("\n");
+
+        return sb.toString();
+    }
+
+    private String buildBatchPrompt(List<Mission> missions) {
+        StringBuilder sb = new StringBuilder("Загружено миссий: " + missions.size() + "\n\n");
+        for (int i = 0; i < missions.size(); i++) {
+            Mission m = missions.get(i);
+            sb.append("--- Миссия ").append(i + 1).append(" ---\n");
+            sb.append("ID: ").append(safe(m.getMissionId()));
+            sb.append(", Результат: ").append(safe(m.getOutcome()));
+            sb.append(", Ущерб: ").append(m.getDamageCost());
+            if (m.getCurse() != null)
+                sb.append(", Угроза: ").append(safe(m.getCurse().getThreatLevel()));
+            if (m.getSorcerers() != null && !m.getSorcerers().isEmpty())
+                sb.append(", Участники: ").append(
+                        m.getSorcerers().stream().map(Sorcerer::getName).collect(Collectors.joining(", ")));
+            sb.append("\n");
+        }
         return sb.toString();
     }
 
