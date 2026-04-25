@@ -5,6 +5,7 @@ import parser.MissionParser;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,6 +20,14 @@ public class ValidatingParserDecorator extends MissionParser {
     @Override
     public Mission parse(File file) throws IOException {
         Mission mission = delegate.parse(file);
+        validate(mission);
+        return mission;
+    }
+
+    /** Делегирование потокового парсинга (REST API) с валидацией */
+    @Override
+    public Mission parse(InputStream in) throws IOException {
+        Mission mission = delegate.parse(in);
         validate(mission);
         return mission;
     }

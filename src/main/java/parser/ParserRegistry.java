@@ -21,9 +21,14 @@ public class ParserRegistry {
                 ? FormatDetector.detect(file)
                 : name.substring(dot + 1).toLowerCase();
 
-        Supplier<MissionParser> supplier = registry.get(ext);
+        return getParser(ext);
+    }
+
+    /** Получение парсера по имени формата (для REST API / InputStream, когда файла нет) */
+    public MissionParser getParser(String format) {
+        Supplier<MissionParser> supplier = registry.get(format.toLowerCase());
         if (supplier == null) {
-            throw new IllegalArgumentException("Неизвестный формат файла: " + ext);
+            throw new IllegalArgumentException("Неизвестный формат: " + format);
         }
         return supplier.get();
     }

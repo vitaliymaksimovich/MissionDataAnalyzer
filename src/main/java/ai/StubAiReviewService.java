@@ -2,12 +2,9 @@ package ai;
 
 import model.Mission;
 
-public class StubAiReviewService implements AiReviewService {
+import java.util.List;
 
-    @Override
-    public String generateReview(Mission mission) {
-        return stub(mission, "обзор");
-    }
+public class StubAiReviewService implements AiReviewService {
 
     @Override
     public String generateBriefAnalysis(Mission mission) {
@@ -32,6 +29,20 @@ public class StubAiReviewService implements AiReviewService {
     @Override
     public String generateStory(Mission mission) {
         return stub(mission, "история");
+    }
+
+    @Override
+    public String customQuestion(Mission mission, String question) {
+        return stub(mission, "свой вопрос: " + question);
+    }
+
+    @Override
+    public String analyzeBatch(List<Mission> missions) {
+        if (missions == null || missions.isEmpty())
+            return "Нет загруженных миссий для анализа.";
+        return "AI (общий анализ) недоступен.\n"
+                + "Загружено миссий: " + missions.size() + "\n\n"
+                + "Для полного анализа подключите GigaChat API (переменная GIGACHAT_AUTH_KEY).";
     }
 
     private String stub(Mission mission, String type) {

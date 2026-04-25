@@ -15,99 +15,126 @@ import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 import java.awt.*;
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.net.http.HttpConnectTimeoutException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-public class MainFrame extends JFrame {
+/**
+ * Главное окно приложения.
+ * Отвечает только за компоновку UI и оркестрацию: делегирует загрузку в MissionLoader,
+ * а управление списком миссий — в MissionListPanel.
+ */
+public class MainFrame extends JFrame implements MissionListPanel.Host {
 
     // --- данные ---
-    private final List<Mission> loadedMissions = new ArrayList<>();
-    private final List<File> loadedFiles = new ArrayList<>();
-    private Mission currentMission;
-    private JButton activeButton;
-    private JButton statsButton;
-
-    // --- фильтрация ---
-    private final FilterChain filterChain = new FilterChain();
-    private JTextField searchField;
+    private final List<Mission>   loadedMissions = new ArrayList<>();
+    private final List<File>      loadedFiles    = new ArrayList<>();
+    private final Set<String>     loadedKeys     = new HashSet<>();
+    private final Set<Mission>    favorites      = new HashSet<>();
+    private final FilterChain     filterChain    = new FilterChain();
+    private Mission               currentMission;
 
     // --- сервисы ---
-    private final MissionService missionService = new MissionService();
-    private final MissionBatchService batchService = new MissionBatchService();
-    private final BatchStatsFormatter statsFormatter = new BatchStatsFormatter();
-    private final AiReviewService aiReviewService = AiServiceFactory.create();
-    private final HtmlReportExporter htmlExporter = new HtmlReportExporter();
+    private final MissionService       missionService  = new MissionService();
+    private final MissionBatchService  batchService    = new MissionBatchService();
+    private final BatchStatsFormatter  statsFormatter  = new BatchStatsFormatter();
+    private final AiReviewService      aiReviewService = AiServiceFactory.create();
+    private final MissionLoader        missionLoader   = new MissionLoader(missionService);
+    private final ExportController     exportController = new ExportController(this);
 
-    private final List<ReportFormatter> formatters = List.of(
-            new FullReportFormatter(),
-            new SummaryReportFormatter(),
-            new RiskReportFormatter()
-    );
+    // --- отчёты ---
+    private final JComboBox<ReportFormatter>   reportTypeSelector;
+    private final StyledReportPane             reportArea = new StyledReportPane();
 
     // --- UI ---
-    private final StyledReportPane reportArea = new StyledReportPane();
-    private final JComboBox<ReportFormatter> reportTypeSelector;
-    private final JPanel missionListPanel = new JPanel();
+    private MissionListPanel missionListPanel;
 
-    // gif для помощника
-    private ImageIcon assistantGif;
-    private ImageIcon assistantStandGif;
-    private JButton assistantBtn;
+    // --- иконки помощника ---
+    private ImageIcon assistantIcon;
+    private ImageIcon assistantSleepIcon;
 
-    // --- стили ---
-    private static final Color BG_MAIN      = new Color(245, 247, 250);
-    private static final Color BG_PANEL     = Color.WHITE;
-    private static final Color BG_TOP       = new Color(240, 243, 247);
-    private static final Color BG_SELECTED  = new Color(210, 226, 248);
-    private static final Color BG_SECONDARY = new Color(233, 239, 247);
-    private static final Color BORDER       = new Color(210, 216, 224);
-    private static final Color TEXT         = new Color(35, 42, 52);
-
-    private static final Font UI_FONT     = new Font("Segoe UI", Font.PLAIN, 14);
-    private static final Font UI_BOLD     = new Font("Segoe UI", Font.BOLD, 14);
-    private static final Font TITLE_FONT  = new Font("Segoe UI", Font.BOLD, 15);
-    private static final Font REPORT_FONT = new Font("Consolas", Font.PLAIN, 19);
+    // --- шрифты ---
+    private static final Font UI_FONT    = new Font("Segoe UI", Font.PLAIN, 14);
+    private static final Font UI_BOLD    = new Font("Segoe UI", Font.BOLD,  14);
+    private static final Font TITLE_FONT = new Font("Segoe UI", Font.BOLD,  15);
 
     public MainFrame() {
-        reportTypeSelector = new JComboBox<>(formatters.toArray(new ReportFormatter[0]));
+        reportTypeSelector = new JComboBox<>();
+        fillReportSelector(); // заполняем с учётом текущего состояния плагинов
         reportTypeSelector.setRenderer((list, value, index, isSelected, cellHasFocus) -> {
             JLabel label = new JLabel(value != null ? value.getDisplayName() : "");
             label.setFont(UI_BOLD);
             label.setBorder(new EmptyBorder(6, 10, 6, 10));
             label.setOpaque(true);
-            label.setBackground(isSelected ? list.getSelectionBackground() : Color.WHITE);
-            label.setForeground(TEXT);
+            label.setBackground(isSelected ? list.getSelectionBackground() : AppTheme.bgPanel());
+            label.setForeground(AppTheme.text());
             return label;
         });
         reportTypeSelector.addActionListener(e -> refreshReport());
 
-        loadAssistantGif();
+        loadAssistantIcons();
         setupWindow();
         applySettings();
+
+        // Показываем уведомление о загруженных плагинах — после отрисовки окна
+        SwingUtilities.invokeLater(() -> PluginStartupToast.showIfNeeded(this));
     }
 
-    private void loadAssistantGif() {
-        try {
-            java.net.URL sleepUrl = getClass().getResource("/templates/assets/Assistant-sleep.gif");
-            if (sleepUrl != null) {
-                ImageIcon original = new ImageIcon(sleepUrl);
-                Image scaled = original.getImage().getScaledInstance(88, 88, Image.SCALE_DEFAULT);
-                assistantGif = new ImageIcon(scaled);
-            }
-        } catch (Exception ignored) {}
+    // =========================================================================
+    // MissionListPanel.Host — реализация контракта
+    // =========================================================================
 
+    @Override public JFrame         getFrame()             { return this; }
+    @Override public List<Mission>  getMissions()          { return loadedMissions; }
+    @Override public Set<Mission>   getFavorites()         { return favorites; }
+    @Override public FilterChain    getFilterChain()       { return filterChain; }
+    @Override public Mission        getCurrentMission()    { return currentMission; }
+    @Override public String         getReportText()        { return reportArea.getText(); }
+    @Override public AiReviewService getAiService()        { return aiReviewService; }
+    @Override public ImageIcon      getAssistantSleepIcon(){ return assistantSleepIcon; }
+
+    @Override
+    public void onMissionSelected(int index) {
+        currentMission = loadedMissions.get(index);
+        refreshReport();
+    }
+
+    @Override
+    public void onShowStats() {
+        showStats();
+    }
+
+    @Override
+    public void onClearConfirmed() {
+        loadedFiles.clear();
+        loadedMissions.clear();
+        loadedKeys.clear();
+        favorites.clear();
+        currentMission = null;
+        reportArea.setStyledText("");
+        removeChartsButton();
+        missionListPanel.rebuild();
+    }
+
+    // =========================================================================
+    // Инициализация окна
+    // =========================================================================
+
+    private void loadAssistantIcons() {
+        assistantIcon      = loadScaledIcon("/templates/assets/Assistant-stand.png", 88);
+        assistantSleepIcon = loadScaledIcon("/templates/assets/Assistant-sleep.png",  88);
+    }
+
+    private ImageIcon loadScaledIcon(String resourcePath, int size) {
         try {
-            java.net.URL standUrl = getClass().getResource("/templates/assets/Assistant-stand.gif");
-            if (standUrl != null) {
-                ImageIcon original = new ImageIcon(standUrl);
-                Image scaled = original.getImage().getScaledInstance(88, 88, Image.SCALE_DEFAULT);
-                assistantStandGif = new ImageIcon(scaled);
-            }
-        } catch (Exception ignored) {}
+            java.net.URL url = getClass().getResource(resourcePath);
+            if (url == null) return null;
+            ImageIcon original = new ImageIcon(url);
+            Image scaled = original.getImage().getScaledInstance(size, size, Image.SCALE_SMOOTH);
+            return new ImageIcon(scaled);
+        } catch (Exception ignored) { return null; }
     }
 
     private void setupWindow() {
@@ -116,94 +143,79 @@ public class MainFrame extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout(8, 8));
-        getContentPane().setBackground(BG_MAIN);
+        getContentPane().setBackground(AppTheme.bgMain());
 
-        add(buildTopPanel(), BorderLayout.NORTH);
+        add(buildTopPanel(),    BorderLayout.NORTH);
         add(buildCenterPanel(), BorderLayout.CENTER);
     }
 
+    // =========================================================================
+    // Компоновка панелей
+    // =========================================================================
+
     private JPanel buildTopPanel() {
-        JButton chooseBtn   = createPrimaryButton("Выбрать файлы");
-        JButton saveTxtBtn  = createPrimaryButton("Сохранить TXT");
-        JButton saveHtmlBtn = createPrimaryButton("Сохранить HTML");
+        JButton chooseBtn = createPrimaryButton("Загрузить");
+        JButton exportBtn = createPrimaryButton("Экспорт ▼");
 
         ImageIcon settingsIcon = null;
         try {
             java.net.URL url = getClass().getResource("/templates/assets/settings.png");
             if (url != null) {
-                ImageIcon original = new ImageIcon(url);
-                Image scaled = original.getImage().getScaledInstance(18, 18, Image.SCALE_SMOOTH);
+                ImageIcon orig = new ImageIcon(url);
+                Image scaled = orig.getImage().getScaledInstance(18, 18, Image.SCALE_SMOOTH);
                 settingsIcon = new ImageIcon(scaled);
             }
         } catch (Exception ignored) {}
 
         JButton settingsBtn = createSettingsButton(settingsIcon);
-
         JButton logsBtn     = createSecondaryButton("Логи");
 
         styleComboBox(reportTypeSelector);
 
-        chooseBtn.addActionListener(e -> chooseFiles());
-        saveTxtBtn.addActionListener(e -> saveReportToTxt());
-        saveHtmlBtn.addActionListener(e -> saveReportToHtml());
+        chooseBtn.addActionListener(e -> showLoadDialog());
+        exportBtn.addActionListener(e -> exportController.showExportMenu(
+                exportBtn, reportArea.getText(),
+                (ReportFormatter) reportTypeSelector.getSelectedItem()
+        ));
         settingsBtn.addActionListener(e -> openSettings());
         logsBtn.addActionListener(e -> showLogs());
 
         JPanel panel = new JPanel(new BorderLayout(12, 0));
-        panel.setBackground(BG_TOP);
+        panel.setBackground(AppTheme.bgTop());
         panel.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 1, 0, BORDER),
+                new MatteBorder(0, 0, 1, 0, AppTheme.border()),
                 new EmptyBorder(10, 12, 10, 12)
         ));
 
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         left.setOpaque(false);
-
         JLabel reportTypeLabel = new JLabel("Тип отчёта:");
         reportTypeLabel.setFont(UI_BOLD);
-        reportTypeLabel.setForeground(TEXT);
-
+        reportTypeLabel.setForeground(AppTheme.text());
         left.add(chooseBtn);
         left.add(reportTypeLabel);
         left.add(reportTypeSelector);
-        left.add(saveTxtBtn);
-        left.add(saveHtmlBtn);
+        left.add(exportBtn);
 
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.setOpaque(false);
         right.add(settingsBtn);
         right.add(logsBtn);
 
-        panel.add(left, BorderLayout.WEST);
+        panel.add(left,  BorderLayout.WEST);
         panel.add(right, BorderLayout.EAST);
-
         return panel;
     }
 
     private JSplitPane buildCenterPanel() {
-        missionListPanel.setLayout(new BoxLayout(missionListPanel, BoxLayout.Y_AXIS));
-        missionListPanel.setBackground(BG_PANEL);
-        missionListPanel.setBorder(new EmptyBorder(8, 8, 8, 8));
+        // Левая панель — делегирована в MissionListPanel
+        missionListPanel = new MissionListPanel(this);
 
-        JScrollPane missionScroll = new JScrollPane(missionListPanel);
-        styleScrollPane(missionScroll);
-        missionScroll.setBorder(createTitledBorder("Миссии"));
-        missionScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        missionScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-
-        JPanel leftBottomPanel = buildLeftBottomPanel();
-
-        JPanel leftPanel = new JPanel(new BorderLayout(0, 8));
-        leftPanel.setBackground(BG_MAIN);
-        leftPanel.setBorder(new EmptyBorder(8, 8, 8, 0));
-        leftPanel.setPreferredSize(new Dimension(250, 0));
-        leftPanel.add(missionScroll, BorderLayout.CENTER);
-        leftPanel.add(leftBottomPanel, BorderLayout.SOUTH);
-
+        // Правая панель — область отчёта
         reportArea.setReportFontFamily("Consolas");
         reportArea.setReportFontSize(SettingsDialog.getFontSize());
-        reportArea.setForeground(TEXT);
-        reportArea.setBackground(BG_PANEL);
+        reportArea.setForeground(AppTheme.text());
+        reportArea.setBackground(AppTheme.bgPanel());
         reportArea.setBorder(BorderFactory.createEmptyBorder(18, 20, 18, 20));
 
         JScrollPane reportScroll = new JScrollPane(reportArea);
@@ -211,252 +223,191 @@ public class MainFrame extends JFrame {
         reportScroll.setBorder(createTitledBorder("Отчёт"));
 
         JPanel rightPanel = new JPanel(new BorderLayout());
-        rightPanel.setBackground(BG_MAIN);
+        rightPanel.setBackground(AppTheme.bgMain());
         rightPanel.setBorder(new EmptyBorder(8, 0, 8, 8));
         rightPanel.add(reportScroll, BorderLayout.CENTER);
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, rightPanel);
-        split.setDividerLocation(250);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, missionListPanel, rightPanel);
+        split.setDividerLocation(280);
         split.setResizeWeight(0.0);
         split.setBorder(null);
-        split.setBackground(BG_MAIN);
+        split.setBackground(AppTheme.bgMain());
         split.setDividerSize(8);
-
         return split;
     }
 
-    private JPanel buildLeftBottomPanel() {
-        // --- панель поиска ---
-        JPanel searchPanel = new JPanel();
-        searchPanel.setLayout(new BoxLayout(searchPanel, BoxLayout.Y_AXIS));
-        searchPanel.setBackground(BG_PANEL);
-        searchPanel.setBorder(createTitledBorder("Поиск"));
+    // =========================================================================
+    // Загрузка миссий — диалог выбора источника
+    // =========================================================================
 
-        searchField = new JTextField();
-        searchField.setFont(UI_FONT);
-        searchField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
-        searchField.setToolTipText("Поиск по ID, локации, результату, проклятию");
+    private void showLoadDialog() {
+        JDialog dialog = new JDialog(this, "Источник данных", true);
+        dialog.setLayout(new BorderLayout());
+        dialog.setResizable(false);
 
-        String placeholder = "ID, локация, результат, проклятие";
-        searchField.setText(placeholder);
-        searchField.setForeground(Color.GRAY);
+        JLabel title = new JLabel("Откуда загрузить миссии?");
+        title.setFont(TITLE_FONT);
+        title.setForeground(AppTheme.text());
+        title.setHorizontalAlignment(SwingConstants.CENTER);
+        title.setBorder(new EmptyBorder(16, 16, 8, 16));
 
-        searchField.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusGained(java.awt.event.FocusEvent e) {
-                if (searchField.getText().equals(placeholder)) {
-                    searchField.setText("");
-                    searchField.setForeground(Color.BLACK);
-                }
-            }
+        JPanel buttonsPanel = new JPanel();
+        buttonsPanel.setLayout(new BoxLayout(buttonsPanel, BoxLayout.Y_AXIS));
+        buttonsPanel.setBackground(AppTheme.bgMain());
+        buttonsPanel.setBorder(new EmptyBorder(4, 16, 16, 16));
 
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                if (searchField.getText().isEmpty()) {
-                    searchField.setText(placeholder);
-                    searchField.setForeground(Color.GRAY);
-                }
-            }
-        });
+        JButton fromFilesBtn = createLoadOptionButton("Из файлов");
+        JButton fromUrlBtn   = createLoadOptionButton("Из URL (одна миссия)");
+        JButton fromDirBtn   = createLoadOptionButton("Из URL (папка — все миссии)");
 
-        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            public void insertUpdate(javax.swing.event.DocumentEvent e)  { applySearchAndFilter(); }
-            public void removeUpdate(javax.swing.event.DocumentEvent e)  { applySearchAndFilter(); }
-            public void changedUpdate(javax.swing.event.DocumentEvent e) { applySearchAndFilter(); }
-        });
+        fromFilesBtn.addActionListener(e -> { dialog.dispose(); chooseFiles(); });
+        fromUrlBtn.addActionListener(e ->   { dialog.dispose(); loadFromUrl(); });
+        fromDirBtn.addActionListener(e ->   { dialog.dispose(); loadFromDirectoryUrl(); });
 
-        JButton filterBtn = createSecondaryButton("Фильтры");
-        filterBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
-        filterBtn.setToolTipText("Настроить фильтры");
-        filterBtn.addActionListener(e -> {
-            FilterDialog dialog = new FilterDialog(this, filterChain);
-            dialog.setVisible(true);
-            if (dialog.isApplied()) {
-                if (!filterChain.isEmpty()) {
-                    filterBtn.setBackground(new Color(180, 210, 255));
-                    filterBtn.setOpaque(true);
-                } else {
-                    filterBtn.setBackground(BG_SECONDARY);
-                }
-                applySearchAndFilter();
-            }
-        });
+        buttonsPanel.add(fromFilesBtn);
+        buttonsPanel.add(Box.createVerticalStrut(8));
+        buttonsPanel.add(fromUrlBtn);
+        buttonsPanel.add(Box.createVerticalStrut(8));
+        buttonsPanel.add(fromDirBtn);
 
-        JPanel searchInner = new JPanel();
-        searchInner.setLayout(new BoxLayout(searchInner, BoxLayout.Y_AXIS));
-        searchInner.setOpaque(false);
-        searchInner.setBorder(new EmptyBorder(6, 6, 6, 6));
-        searchInner.add(searchField);
-        searchInner.add(Box.createVerticalStrut(6));
-        searchInner.add(filterBtn);
-
-        searchPanel.add(searchInner);
-
-        // --- панель действий (статистика + помощник) ---
-        JPanel actionsPanel = new JPanel();
-        actionsPanel.setLayout(new BoxLayout(actionsPanel, BoxLayout.Y_AXIS));
-        actionsPanel.setBackground(BG_PANEL);
-        actionsPanel.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
-                new EmptyBorder(10, 10, 10, 10)
-        ));
-
-        statsButton = createSecondaryWideButton("Общая статистика");
-        statsButton.addActionListener(e -> {
-            if (loadedMissions.isEmpty()) {
-                warn("Сначала загрузите файлы миссий.");
-                return;
-            }
-            setActiveButton(statsButton);
-            showStats();
-        });
-        statsButton.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        assistantBtn = buildAssistantButton();
-        assistantBtn.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        actionsPanel.add(statsButton);
-        actionsPanel.add(Box.createVerticalStrut(12));
-        actionsPanel.add(assistantBtn);
-
-        // --- общая нижняя панель ---
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBackground(BG_MAIN);
-        panel.add(searchPanel);
-        panel.add(Box.createVerticalStrut(8));
-        panel.add(actionsPanel);
-
-        return panel;
+        dialog.getContentPane().setBackground(AppTheme.bgMain());
+        dialog.add(title,        BorderLayout.NORTH);
+        dialog.add(buttonsPanel, BorderLayout.CENTER);
+        dialog.pack();
+        dialog.setSize(new Dimension(340, dialog.getHeight()));
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
     }
 
-    private JButton buildAssistantButton() {
-        JButton btn = assistantGif != null
-                ? new JButton(assistantGif)
-                : new JButton("AI");
-
-        btn.setBorderPainted(false);
-        btn.setContentAreaFilled(false);
+    private JButton createLoadOptionButton(String text) {
+        JButton btn = new JButton(text);
+        btn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+        btn.setFont(UI_BOLD);
+        btn.setForeground(AppTheme.text());
+        btn.setBackground(AppTheme.bgSecondary());
         btn.setFocusPainted(false);
+        btn.setBorder(new CompoundBorder(
+                new LineBorder(AppTheme.border(), 1, true),
+                new EmptyBorder(8, 16, 8, 16)
+        ));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.setToolTipText("Открыть помощника");
-
-        btn.addActionListener(e -> {
-            if (currentMission == null) {
-                warn("Сначала откройте миссию для анализа.");
-                return;
-            }
-            String reportText = reportArea.getText();
-            new AiAssistantDialog(this, aiReviewService, currentMission,
-                    assistantStandGif, reportText).show();
-        });
-
         return btn;
     }
 
-    // --- загрузка файлов ---
+    // -------------------------------------------------------------------------
 
     private void chooseFiles() {
         JFileChooser fc = new JFileChooser();
         fc.setMultiSelectionEnabled(true);
         if (fc.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
-        loadedFiles.clear();
-        loadedMissions.clear();
-        currentMission = null;
-        activeButton = null;
-        filterChain.clear();
-        if (searchField != null) searchField.setText("");
-        reportArea.setStyledText("");
+        MissionLoader.FileLoadResult result =
+                missionLoader.loadFiles(fc.getSelectedFiles(), loadedKeys);
 
-        List<String> failed = new ArrayList<>();
-        for (File file : fc.getSelectedFiles()) {
-            try {
-                Mission mission = missionService.loadMission(file);
-                loadedFiles.add(file);
-                loadedMissions.add(mission);
-            } catch (Exception e) {
-                AppLogger.error("Не удалось загрузить файл: " + file.getName() + " — " + e.getMessage());
-                failed.add(file.getName() + ": " + e.getMessage());
-            }
-        }
+        if (!result.duplicates().isEmpty())
+            warn("Уже загружены (пропущены): " + String.join(", ", result.duplicates()));
+        if (!result.errors().isEmpty())
+            warn("Не удалось загрузить:\n" + String.join("\n", result.errors()));
 
-        if (!failed.isEmpty()) {
-            warn("Следующие файлы не удалось загрузить:\n" + String.join("\n", failed));
-        }
+        loadedMissions.addAll(result.loaded());
+        loadedFiles.addAll(result.files());
 
-        rebuildMissionList();
+        missionListPanel.rebuild();
 
-        if (!loadedMissions.isEmpty()) {
-            currentMission = loadedMissions.get(0);
+        if (!result.loaded().isEmpty()) {
+            Mission first = result.loaded().getFirst();
+            currentMission = first;
             refreshReport();
-            if (missionListPanel.getComponentCount() > 0) {
-                Component first = missionListPanel.getComponent(0);
-                if (first instanceof JButton btn) setActiveButton(btn);
-            }
+            missionListPanel.setSelectedMission(first);
         }
     }
 
-    // --- построение списка ---
+    private void loadFromUrl() {
+        String url = JOptionPane.showInputDialog(
+                this, "Введите URL для загрузки миссий (REST API):",
+                "Загрузка из URL", JOptionPane.PLAIN_MESSAGE);
+        if (url == null || url.isBlank()) return;
 
-    private void rebuildMissionList() {
-        applySearchAndFilter();
-    }
-
-    private void applySearchAndFilter() {
-        String query = searchField != null ? searchField.getText() : "";
-        if (query.equals("ID, локация, результат, проклятие")) {
-            query = "";
+        try {
+            Mission mission = missionLoader.loadFromUrl(url, loadedKeys);
+            loadedMissions.add(mission);
+            missionListPanel.rebuild();
+            currentMission = mission;
+            refreshReport();
+            missionListPanel.setSelectedMission(mission);
+        } catch (MissionLoader.DuplicateMissionException e) {
+            warn(e.getMessage());
+        } catch (HttpConnectTimeoutException e) {
+            AppLogger.error("Таймаут подключения к " + url);
+            warn("Не удалось подключиться к серверу (таймаут).");
+        } catch (IllegalArgumentException e) {
+            AppLogger.error("Некорректный URL: " + url + " — " + e.getMessage());
+            warn("Некорректный URL:\n" + e.getMessage());
+        } catch (Exception e) {
+            AppLogger.error("Ошибка загрузки из URL: " + url + " — " + e.getMessage());
+            warn("Не удалось загрузить миссию из URL:\n" + e.getMessage());
         }
-        List<Mission> filtered = filterChain.applyWithSearch(loadedMissions, query);
-        rebuildMissionListFromFiltered(filtered);
     }
 
-    private void rebuildMissionListFromFiltered(List<Mission> missions) {
-        missionListPanel.removeAll();
+    private void loadFromDirectoryUrl() {
+        String baseUrl = JOptionPane.showInputDialog(
+                this, "Введите URL папки с миссиями\n(например, http://localhost:8000/):",
+                "Загрузка из папки", JOptionPane.PLAIN_MESSAGE);
+        if (baseUrl == null || baseUrl.isBlank()) return;
 
-        for (Mission mission : missions) {
-            String label = mission.getMissionId() != null
-                    ? mission.getMissionId()
-                    : "Миссия";
+        missionLoader.loadFromDirectory(
+                this, baseUrl, loadedKeys,
+                // onMissionsReady — добавляем каждую миссию сразу по мере загрузки
+                missions -> {
+                    loadedMissions.addAll(missions);
+                    missionListPanel.rebuild();
+                },
+                // onComplete — итоговое сообщение
+                result -> {
+                    if (result.loaded() == 0 && result.errors().size() == 1
+                            && result.duplicates().isEmpty()) {
+                        // единственная ошибка — проблема с директорией
+                        warn("Ошибка загрузки:\n" + result.errors().getFirst());
+                        return;
+                    }
 
-            JButton btn = createMissionButton(label);
-            int realIdx = loadedMissions.indexOf(mission);
-            btn.addActionListener(e -> {
-                setActiveButton(btn);
-                selectMission(realIdx);
-            });
-            missionListPanel.add(btn);
-            missionListPanel.add(Box.createVerticalStrut(8));
-        }
+                    // Выделяем первую загруженную миссию если ничего не было выбрано
+                    if (!loadedMissions.isEmpty() && currentMission == null) {
+                        currentMission = loadedMissions.getFirst();
+                        refreshReport();
+                        missionListPanel.setSelectedMission(currentMission);
+                    }
 
-        missionListPanel.revalidate();
-        missionListPanel.repaint();
+                    StringBuilder msg = new StringBuilder();
+                    msg.append("Загружено: ").append(result.loaded())
+                       .append(" из ").append(result.total());
+                    if (!result.duplicates().isEmpty())
+                        msg.append("\n\nПропущены (дубликаты): ")
+                           .append(String.join(", ", result.duplicates()));
+                    if (!result.errors().isEmpty())
+                        msg.append("\n\nОшибки:\n").append(String.join("\n", result.errors()));
+
+                    int msgType = result.errors().isEmpty()
+                            ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.WARNING_MESSAGE;
+                    JOptionPane.showMessageDialog(this, msg.toString(), "Результат загрузки", msgType);
+                }
+        );
     }
 
-    private void setActiveButton(JButton btn) {
-        if (activeButton != null) {
-            resetMissionButtonStyle(activeButton);
-        }
-        activeButton = btn;
-        activeButton.setBackground(BG_SELECTED);
-        activeButton.setBorder(new CompoundBorder(
-                new LineBorder(new Color(155, 185, 225), 1, true),
-                new EmptyBorder(10, 14, 10, 14)
-        ));
-        activeButton.setOpaque(true);
-    }
+    // =========================================================================
+    // Отчёты и статистика
+    // =========================================================================
 
-    private void selectMission(int idx) {
-        currentMission = loadedMissions.get(idx);
-        refreshReport();
+    private void refreshReport() {
+        if (currentMission == null) return;
+        ReportFormatter formatter = (ReportFormatter) reportTypeSelector.getSelectedItem();
+        if (formatter == null) return;
+        reportArea.setStyledText(formatter.format(currentMission));
+        removeChartsButton();
     }
 
     private void showStats() {
-        if (loadedMissions.isEmpty()) {
-            warn("Сначала загрузите файлы миссий.");
-            return;
-        }
         currentMission = null;
         reportArea.setStyledText(statsFormatter.format(loadedMissions));
         reportArea.setCaretPosition(0);
@@ -466,17 +417,16 @@ public class MainFrame extends JFrame {
     private void showChartsButton() {
         JScrollPane reportScroll = (JScrollPane) reportArea.getParent().getParent();
         Container rightPanel = reportScroll.getParent();
-
         removeChartsButton();
 
         JButton chartsBtn = new JButton("Показать графики");
         chartsBtn.setFont(UI_BOLD);
-        chartsBtn.setForeground(TEXT);
-        chartsBtn.setBackground(BG_SECONDARY);
+        chartsBtn.setForeground(AppTheme.text());
+        chartsBtn.setBackground(AppTheme.bgSecondary());
         chartsBtn.setFocusPainted(false);
         chartsBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         chartsBtn.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
+                new LineBorder(AppTheme.border(), 1, true),
                 new EmptyBorder(8, 16, 8, 16)
         ));
         chartsBtn.addActionListener(e -> {
@@ -491,20 +441,12 @@ public class MainFrame extends JFrame {
 
         JPanel btnWrapper = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 6));
         btnWrapper.setName("chartsBtn");
-        btnWrapper.setBackground(BG_MAIN);
+        btnWrapper.setBackground(AppTheme.bgMain());
         btnWrapper.add(chartsBtn);
 
         rightPanel.add(btnWrapper, BorderLayout.SOUTH);
         rightPanel.revalidate();
         rightPanel.repaint();
-    }
-
-    private void refreshReport() {
-        if (currentMission == null) return;
-        ReportFormatter formatter = (ReportFormatter) reportTypeSelector.getSelectedItem();
-        if (formatter == null) return;
-        reportArea.setStyledText(formatter.format(currentMission));
-        removeChartsButton();
     }
 
     private void removeChartsButton() {
@@ -520,43 +462,87 @@ public class MainFrame extends JFrame {
         }
     }
 
-    // --- настройки ---
+    // =========================================================================
+    // Плагины и настройки
+    // =========================================================================
+
+    public void reloadPlugins() {
+        missionService.reloadPlugins();       // пересобирает реестр парсеров
+        refreshReportSelector();              // пересобирает комбобокс форматтеров
+    }
+
+    /**
+     * Первичное заполнение комбобокса форматтеров — при старте приложения.
+     * Загружает плагины через PluginManager и добавляет активные форматтеры.
+     */
+    private void fillReportSelector() {
+        List<ReportFormatter> list = ReportFormatterRegistryConfig.createDefault().getAll();
+        reportTypeSelector.removeAllItems();
+        for (ReportFormatter f : list) reportTypeSelector.addItem(f);
+    }
+
+    /**
+     * Пересобирает комбобокс форматтеров после изменения состояния плагинов.
+     * Сохраняет текущий выбор если соответствующий форматтер остался активным.
+     */
+    private void refreshReportSelector() {
+        // Запоминаем название текущего выбора
+        ReportFormatter current = (ReportFormatter) reportTypeSelector.getSelectedItem();
+        String currentName = current != null ? current.getDisplayName() : null;
+
+        // Пересобираем список с учётом новых enabled/disabled
+        List<ReportFormatter> updated = ReportFormatterRegistryConfig.createDefault().getAll();
+        reportTypeSelector.removeAllItems();
+        for (ReportFormatter f : updated) reportTypeSelector.addItem(f);
+
+        // Восстанавливаем выбор если он ещё существует, иначе первый элемент
+        if (currentName != null) {
+            for (int i = 0; i < reportTypeSelector.getItemCount(); i++) {
+                if (reportTypeSelector.getItemAt(i).getDisplayName().equals(currentName)) {
+                    reportTypeSelector.setSelectedIndex(i);
+                    break;
+                }
+            }
+        }
+
+        // Обновляем отчёт под новый форматтер
+        if (currentMission != null) refreshReport();
+    }
 
     private void openSettings() {
-        new SettingsDialog(this, this::applySettings).setVisible(true);
+        new SettingsDialog(this, this::applySettings, () ->
+                new PluginsDialog(this, this::reloadPlugins).setVisible(true)
+        ).setVisible(true);
     }
 
     private void applySettings() {
         reportArea.setReportFontSize(SettingsDialog.getFontSize());
 
-        if (SettingsDialog.isDarkTheme()) {
-            Color darkMain = new Color(40, 43, 48);
-            Color darkPanel = new Color(30, 32, 36);
-            Color darkText = new Color(200, 210, 220);
+        // Смена LAF + обновление дерева компонентов — делегируем в ThemeManager
+        ThemeManager.applyLookAndFeel(this, SettingsDialog.isDarkTheme());
 
-            getContentPane().setBackground(darkMain);
-            missionListPanel.setBackground(darkPanel);
-            reportArea.setBackground(darkPanel);
-            reportArea.setForeground(darkText);
+        getContentPane().setBackground(AppTheme.bgMain());
+        reportArea.setBackground(AppTheme.bgPanel());
+        reportArea.setForeground(AppTheme.text());
 
-        } else {
-            getContentPane().setBackground(BG_MAIN);
-            missionListPanel.setBackground(BG_PANEL);
-            reportArea.setBackground(BG_PANEL);
-            reportArea.setForeground(TEXT);
-        }
+        ThemeManager.applyThemeToTree(getContentPane());
 
-        if (currentMission != null) {
-            refreshReport();
-        } else if (!loadedMissions.isEmpty()) {
-            showStats();
-        }
+        // Пересоздаём список миссий под новую тему, восстанавливаем выделение
+        missionListPanel.onThemeChanged();
+        Mission savedMission = currentMission;
+        missionListPanel.rebuild();
+        if (savedMission != null) missionListPanel.setSelectedMission(savedMission);
+
+        if (currentMission != null) refreshReport();
+        else if (!loadedMissions.isEmpty()) showStats();
 
         revalidate();
         repaint();
     }
 
-    // --- логи ---
+    // =========================================================================
+    // Логи
+    // =========================================================================
 
     private void showLogs() {
         JTextPane logPane = new JTextPane();
@@ -566,214 +552,100 @@ public class MainFrame extends JFrame {
         logPane.setMargin(new Insets(12, 12, 12, 12));
 
         StyledDocument doc = logPane.getStyledDocument();
-        String[] lines = AppLogger.getLogs().split("\n");
-        for (String line : lines) {
+        for (String line : AppLogger.getLogs().split("\n")) {
             Color color;
-            if (line.startsWith("[ERROR"))        color = new Color(220, 80, 80);
-            else if (line.startsWith("[WARN"))    color = new Color(210, 160, 40);
-            else if (line.startsWith("[EXPORT"))  color = new Color(80, 180, 120);
-            else                                  color = new Color(180, 200, 220);
+            if      (line.startsWith("[ERROR"))  color = new Color(220, 80,  80);
+            else if (line.startsWith("[WARN"))   color = new Color(210, 160, 40);
+            else if (line.startsWith("[EXPORT")) color = new Color(80,  180, 120);
+            else                                 color = new Color(180, 200, 220);
 
             javax.swing.text.Style style = doc.addStyle(null, null);
             StyleConstants.setForeground(style, color);
             StyleConstants.setFontFamily(style, "Consolas");
             StyleConstants.setFontSize(style, 13);
-            try {
-                doc.insertString(doc.getLength(), line + "\n", style);
-            } catch (javax.swing.text.BadLocationException ignored) {}
+            try { doc.insertString(doc.getLength(), line + "\n", style); }
+            catch (javax.swing.text.BadLocationException ignored) {}
         }
-
         logPane.setCaretPosition(doc.getLength());
 
         JScrollPane scrollPane = new JScrollPane(logPane);
         scrollPane.setPreferredSize(new Dimension(700, 400));
-
         JOptionPane.showMessageDialog(this, scrollPane, "Логи", JOptionPane.PLAIN_MESSAGE);
     }
 
-    // --- экспорт ---
-
-    private void saveReportToTxt() {
-        if (reportArea.getText().isBlank()) {
-            warn("Сначала выполните анализ.");
-            return;
-        }
-        JFileChooser fc = new JFileChooser();
-        if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        File file = ensureExtension(fc.getSelectedFile(), ".txt");
-
-        String sep = "-".repeat(60);
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"));
-        ReportFormatter fmt = (ReportFormatter) reportTypeSelector.getSelectedItem();
-
-        String content = "MISSION ANALYZER REPORT\n" + sep + "\n"
-                + "Дата анализа: " + timestamp + "\n"
-                + "Тип отчёта:   " + (fmt != null ? fmt.getDisplayName() : "—") + "\n"
-                + sep + "\n\n"
-                + reportArea.getText() + "\n"
-                + sep + "\n";
-
-        try (FileWriter fw = new FileWriter(file)) {
-            fw.write(content);
-            AppLogger.export("TXT", file.getAbsolutePath());
-            info("Отчёт сохранён:\n" + file.getAbsolutePath());
-        } catch (IOException e) {
-            AppLogger.error("Не удалось сохранить TXT: " + e.getMessage());
-            error("Не удалось сохранить:\n" + e.getMessage());
-        }
-    }
-
-    private void saveReportToHtml() {
-        if (reportArea.getText().isBlank()) {
-            warn("Сначала выполните анализ.");
-            return;
-        }
-        JFileChooser fc = new JFileChooser();
-        if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        File file = ensureExtension(fc.getSelectedFile(), ".html");
-        try {
-            htmlExporter.export(file, reportArea.getText());
-            AppLogger.export("HTML", file.getAbsolutePath());
-            info("HTML сохранён:\n" + file.getAbsolutePath());
-        } catch (IOException e) {
-            AppLogger.error("Не удалось сохранить HTML: " + e.getMessage());
-            error("Не удалось сохранить:\n" + e.getMessage());
-        }
-    }
-
-    private File ensureExtension(File file, String ext) {
-        return file.getName().toLowerCase().endsWith(ext)
-                ? file
-                : new File(file.getAbsolutePath() + ext);
-    }
-
-    // --- фабричные методы кнопок ---
+    // =========================================================================
+    // Фабричные методы кнопок
+    // =========================================================================
 
     private JButton createPrimaryButton(String text) {
-        JButton button = new JButton(text);
-        button.setFont(UI_BOLD);
-        button.setForeground(TEXT);
-        button.setBackground(Color.WHITE);
-        button.setFocusPainted(false);
-        button.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
+        JButton btn = new JButton(text);
+        btn.setFont(UI_BOLD);
+        btn.setForeground(AppTheme.text());
+        btn.setBackground(AppTheme.bgPanel());
+        btn.setFocusPainted(false);
+        btn.setBorder(new CompoundBorder(
+                new LineBorder(AppTheme.border(), 1, true),
                 new EmptyBorder(8, 16, 8, 16)
         ));
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setPreferredSize(new Dimension(button.getPreferredSize().width, 38));
-        return button;
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setPreferredSize(new Dimension(btn.getPreferredSize().width, 38));
+        return btn;
     }
 
     private JButton createSecondaryButton(String text) {
-        JButton button = createPrimaryButton(text);
-        button.setBackground(BG_SECONDARY);
-        return button;
+        JButton btn = createPrimaryButton(text);
+        btn.setBackground(AppTheme.bgSecondary());
+        return btn;
     }
 
     private JButton createSettingsButton(ImageIcon icon) {
-        JButton button = new JButton();
-
-        if (icon != null) {
-            button.setIcon(icon);
-        }
-
-        button.setText("");
-
-        button.setBackground(Color.WHITE);
-        button.setOpaque(true);
-        button.setFocusPainted(false);
-        button.setContentAreaFilled(true);
-
-        button.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
+        JButton btn = new JButton();
+        if (icon != null) btn.setIcon(icon);
+        btn.setText("");
+        btn.setBackground(AppTheme.bgPanel());
+        btn.setOpaque(true);
+        btn.setFocusPainted(false);
+        btn.setContentAreaFilled(true);
+        btn.setBorder(new CompoundBorder(
+                new LineBorder(AppTheme.border(), 1, true),
                 new EmptyBorder(0, 0, 0, 0)
         ));
-
-        button.setMargin(new Insets(0, 0, 0, 0));
-        button.setHorizontalAlignment(SwingConstants.CENTER);
-        button.setVerticalAlignment(SwingConstants.CENTER);
-        button.setIconTextGap(0);
-
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setPreferredSize(new Dimension(38, 38));
-        button.setToolTipText("Настройки");
-
-        return button;
-    }
-
-    private JButton createMissionButton(String text) {
-        JButton button = new JButton(text);
-        button.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
-        button.setHorizontalAlignment(SwingConstants.LEFT);
-        button.setFont(UI_BOLD);
-        button.setForeground(TEXT);
-        button.setBackground(Color.WHITE);
-        button.setFocusPainted(false);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
-                new EmptyBorder(10, 14, 10, 14)
-        ));
-        return button;
-    }
-
-    private JButton createSecondaryWideButton(String text) {
-        JButton button = createSecondaryButton(text);
-        button.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
-        return button;
-    }
-
-    private void resetMissionButtonStyle(JButton button) {
-        button.setBackground(Color.WHITE);
-        button.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
-                new EmptyBorder(10, 14, 10, 14)
-        ));
-        button.setOpaque(true);
+        btn.setMargin(new Insets(0, 0, 0, 0));
+        btn.setHorizontalAlignment(SwingConstants.CENTER);
+        btn.setVerticalAlignment(SwingConstants.CENTER);
+        btn.setIconTextGap(0);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.setPreferredSize(new Dimension(38, 38));
+        btn.setToolTipText("Настройки");
+        return btn;
     }
 
     private void styleComboBox(JComboBox<?> comboBox) {
         comboBox.setFont(UI_BOLD);
-        comboBox.setBackground(Color.WHITE);
-        comboBox.setForeground(TEXT);
-        comboBox.setBorder(new LineBorder(BORDER, 1, true));
         comboBox.setPreferredSize(new Dimension(185, 38));
-
-        Component editor = comboBox.getEditor().getEditorComponent();
-        if (editor != null) {
-            editor.setFont(UI_BOLD);
-        }
     }
 
-    private void styleScrollPane(JScrollPane scrollPane) {
-        scrollPane.getViewport().setBackground(BG_PANEL);
-        scrollPane.setBackground(BG_PANEL);
-        scrollPane.setBorder(new LineBorder(BORDER, 1, true));
+    private void styleScrollPane(JScrollPane sp) {
+        sp.getViewport().setBackground(AppTheme.bgPanel());
+        sp.setBackground(AppTheme.bgPanel());
+        sp.setBorder(new LineBorder(AppTheme.border(), 1, true));
     }
 
     private javax.swing.border.Border createTitledBorder(String title) {
         return BorderFactory.createTitledBorder(
                 new CompoundBorder(
-                        new LineBorder(BORDER, 1, true),
+                        new LineBorder(AppTheme.border(), 1, true),
                         new EmptyBorder(6, 6, 6, 6)
                 ),
-                title,
-                0,
-                0,
-                TITLE_FONT,
-                TEXT
+                title, 0, 0, TITLE_FONT, AppTheme.text()
         );
     }
 
-    private void warn(String msg) {
-        JOptionPane.showMessageDialog(this, msg, "Предупреждение", JOptionPane.WARNING_MESSAGE);
-    }
+    // =========================================================================
+    // Диалоги
+    // =========================================================================
 
-    private void error(String msg) {
-        JOptionPane.showMessageDialog(this, msg, "Ошибка", JOptionPane.ERROR_MESSAGE);
-    }
-
-    private void info(String msg) {
-        JOptionPane.showMessageDialog(this, msg, "Успех", JOptionPane.INFORMATION_MESSAGE);
-    }
+    private void warn(String msg)  { JOptionPane.showMessageDialog(this, msg, "Предупреждение", JOptionPane.WARNING_MESSAGE);  }
+    private void error(String msg) { JOptionPane.showMessageDialog(this, msg, "Ошибка",          JOptionPane.ERROR_MESSAGE);   }
+    private void info(String msg)  { JOptionPane.showMessageDialog(this, msg, "Успех",           JOptionPane.INFORMATION_MESSAGE); }
 }

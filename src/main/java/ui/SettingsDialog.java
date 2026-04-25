@@ -22,19 +22,21 @@ public class SettingsDialog extends JDialog {
     private final JComboBox<String> fontSizeBox;
     private final JToggleButton themeToggle;
     private final Runnable onApply;
-
-    // --- стили как в MainFrame ---
-    private static final Color BORDER = new Color(210, 216, 224);
-    private static final Color BG_SECONDARY = new Color(233, 239, 247);
-    private static final Color TEXT = new Color(35, 42, 52);
-    private static final Color BG_MAIN = new Color(245, 247, 250);
+    private final Runnable onOpenPlugins;  // коллбэк для открытия диалога плагинов
 
     private static final Font UI_FONT = new Font("Segoe UI", Font.PLAIN, 14);
     private static final Font UI_BOLD = new Font("Segoe UI", Font.BOLD, 14);
 
+    /** Конструктор без коллбэка плагинов (обратная совместимость) */
     public SettingsDialog(JFrame parent, Runnable onApply) {
+        this(parent, onApply, null);
+    }
+
+    /** Основной конструктор с коллбэком открытия диалога плагинов */
+    public SettingsDialog(JFrame parent, Runnable onApply, Runnable onOpenPlugins) {
         super(parent, "Настройки", true);
         this.onApply = onApply;
+        this.onOpenPlugins = onOpenPlugins;
 
         fontSizeBox = new JComboBox<>(new String[]{
                 "Маленький (12)",
@@ -49,7 +51,8 @@ public class SettingsDialog extends JDialog {
         fontSizeBox.setSelectedIndex(fontSizeToIndex(fontSize));
         themeToggle.setSelected(darkTheme);
 
-        setSize(360, 260);
+        // Высота зависит от наличия кнопки плагинов
+        setSize(360, onOpenPlugins != null ? 310 : 260);
         setLocationRelativeTo(parent);
         setResizable(false);
 
@@ -58,7 +61,7 @@ public class SettingsDialog extends JDialog {
 
     private void buildUI() {
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(BG_MAIN);
+        panel.setBackground(AppTheme.bgMain());
         panel.setBorder(new EmptyBorder(16, 20, 8, 20));
 
         GridBagConstraints gbc = new GridBagConstraints();
@@ -67,20 +70,20 @@ public class SettingsDialog extends JDialog {
 
         JLabel fontLabel = new JLabel("Размер шрифта отчёта:");
         fontLabel.setFont(UI_BOLD);
-        fontLabel.setForeground(TEXT);
+        fontLabel.setForeground(AppTheme.text());
 
         JLabel themeLabel = new JLabel("Тема оформления:");
         themeLabel.setFont(UI_BOLD);
-        themeLabel.setForeground(TEXT);
+        themeLabel.setForeground(AppTheme.text());
 
         fontSizeBox.setFont(UI_FONT);
 
         themeToggle.setFont(UI_BOLD);
-        themeToggle.setForeground(TEXT);
-        themeToggle.setBackground(BG_SECONDARY);
+        themeToggle.setForeground(AppTheme.text());
+        themeToggle.setBackground(AppTheme.bgSecondary());
         themeToggle.setFocusPainted(false);
         themeToggle.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
+                new LineBorder(AppTheme.border(), 1, true),
                 new EmptyBorder(8, 16, 8, 16)
         ));
         themeToggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -120,6 +123,17 @@ public class SettingsDialog extends JDialog {
         exportLogsBtn.addActionListener(e -> exportLogs());
         panel.add(exportLogsBtn, gbc);
 
+        // кнопка управления плагинами (если передан коллбэк)
+        if (onOpenPlugins != null) {
+            gbc.gridy = 4;
+            JButton pluginsBtn = createPrimaryButton("Плагины");
+            pluginsBtn.addActionListener(e -> {
+                dispose(); // закрываем настройки перед открытием плагинов
+                onOpenPlugins.run();
+            });
+            panel.add(pluginsBtn, gbc);
+        }
+
         // кнопки снизу
         JButton applyBtn = createPrimaryButton("Применить");
         JButton cancelBtn = createSecondaryButton("Отмена");
@@ -128,7 +142,7 @@ public class SettingsDialog extends JDialog {
         cancelBtn.addActionListener(e -> dispose());
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
-        btnPanel.setBackground(BG_MAIN);
+        btnPanel.setBackground(AppTheme.bgMain());
         btnPanel.add(applyBtn);
         btnPanel.add(cancelBtn);
 
@@ -203,11 +217,11 @@ public class SettingsDialog extends JDialog {
     private JButton createPrimaryButton(String text) {
         JButton button = new JButton(text);
         button.setFont(UI_BOLD);
-        button.setForeground(TEXT);
-        button.setBackground(Color.WHITE);
+        button.setForeground(AppTheme.text());
+        button.setBackground(AppTheme.bgPanel());
         button.setFocusPainted(false);
         button.setBorder(new CompoundBorder(
-                new LineBorder(BORDER, 1, true),
+                new LineBorder(AppTheme.border(), 1, true),
                 new EmptyBorder(8, 16, 8, 16)
         ));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -216,7 +230,7 @@ public class SettingsDialog extends JDialog {
 
     private JButton createSecondaryButton(String text) {
         JButton button = createPrimaryButton(text);
-        button.setBackground(BG_SECONDARY);
+        button.setBackground(AppTheme.bgSecondary());
         return button;
     }
 }

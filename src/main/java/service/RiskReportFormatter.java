@@ -2,16 +2,13 @@ package service;
 
 import model.Mission;
 
-public class RiskReportFormatter implements ReportFormatter {
+public class RiskReportFormatter extends AbstractReportFormatter {
 
     @Override
     public String getDisplayName() { return "Отчёт по рискам"; }
 
     @Override
-    public String format(Mission mission) {
-        if (mission == null) return "Данные миссии недоступны.";
-        StringBuilder sb = new StringBuilder();
-
+    protected void buildReport(StringBuilder sb, Mission mission) {
         sb.append("=== ОТЧЁТ ПО РИСКАМ ===\n");
         sb.append("  Миссия:  ").append(orMissing(mission.getMissionId())).append("\n");
         sb.append("  Итог:    ").append(orMissing(mission.getOutcome())).append("\n\n");
@@ -62,11 +59,5 @@ public class RiskReportFormatter implements ReportFormatter {
             if (env.getCursedEnergyDensity() > 0)
                 sb.append("  Плотность энергии: ").append(env.getCursedEnergyDensity()).append("\n");
         }
-
-        return sb.toString();
-    }
-
-    private String orMissing(String v) {
-        return (v == null || v.isBlank()) ? "[не указано]" : v;
     }
 }
